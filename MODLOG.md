@@ -254,3 +254,11 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   na lista (gerador da v0.6: maior carga num reboque simples compatível; `CargoMass`; linha "~N t").
   **v2.1.0** = v2.0 + distância estimada no params+0x64 + peso. Tag `v2.1`, backup em
   `D:\Projetos\_backupsts2-routes2.1\` + `v2.1.zip`.
+
+## v2.2.0 (2026-10-02) — soltar o freio de mão após o teleporte
+- Teleporte 0x5ddf20, em 0x5de9f8: `actor+0x1c4 |= (cvar g_park_brake_init != 0)` (objeto da cvar em
+  rva 0x2d387e0, lido por 0x1cbd70); se engatou, grava 1.0 em actor+0x3cc e +0x3d0. **actor+0x1c4 =
+  freio de mão** (byte). Leitura ao vivo com o caminhão parado: +0x1c4 = 1, +0x3cc/+0x3d0 = 1.0.
+- Plugin: caixa "Soltar o freio de mão após teleportar" (padrão ligada); zera os três campos logo após
+  o teleporte e de novo 1 s depois; log com `SPF_TruckData.parking_brake` antes de cada escrita.
+  NÃO testado no jogo.

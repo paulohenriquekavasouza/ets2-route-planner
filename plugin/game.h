@@ -290,6 +290,23 @@ inline bool TeleportToTrailerSpot(float where[3]) {
   }
 }
 
+// The teleport (0x5ddf20, at 0x5de9f8) does `actor+0x1c4 |= (g_park_brake_init != 0)` and, when that
+// engages it, writes 1.0 to actor+0x3cc and +0x3d0: +0x1c4 is the truck's parking brake. Clearing
+// them releases it, as if the player had pressed the parking brake key.
+inline bool ReleaseParkingBrake() {
+  __try {
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
+    if (!Alive(actor)) return false;
+    actor[0x1c4] = 0;
+    *reinterpret_cast<float*>(actor + 0x3cc) = 0.0f;
+    *reinterpret_cast<float*>(actor + 0x3d0) = 0.0f;
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 inline bool CancelJob() {
   __try {
     uint8_t* const ctrl = *At<uint8_t**>(CTRL);

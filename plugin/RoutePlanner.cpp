@@ -41,6 +41,7 @@ char g_cargo_filter[48] = {};
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
 bool g_teleport = true;       // drive-free: put the truck at the source company after starting
+bool g_release_brake = true;  // and release the parking brake the teleport engages
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
@@ -210,6 +211,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   }
   const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None;
   ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
+  ui->UI_Checkbox("Soltar o freio de mão após teleportar", &g_release_brake);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -269,6 +271,18 @@ std::string TruckPos() {
   return b;
 }
 
+bool ParkingBrakeOn() {
+  SPF_TruckData td{};
+  if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
+  return td.parking_brake;
+}
+
+void ReleaseBrake(const char* when) {
+  const bool was = ParkingBrakeOn();
+  const bool ok = game::ReleaseParkingBrake();
+  Log(std::string("freio de mão ") + when + ": " + (was ? "puxado" : "solto") + " -> " + (ok ? "soltando" : "falhou"));
+}
+
 void Teleport() {
   const std::string before = TruckPos();
   float to[3] = {};
@@ -277,6 +291,7 @@ void Teleport() {
   std::snprintf(target, sizeof target, "[%.1f; %.1f; %.1f]", to[0], to[1], to[2]);
   Log(std::string("teleporte para o pátio ") + target + ": " + (ok ? "ok" : "falhou") + ", caminhão em " + before + " -> " + TruckPos());
   g_tp_check_in = 60; // and again a second later, in case the move is applied on a later frame
+  if (ok && g_release_brake) ReleaseBrake("logo após o teleporte");
   if (!ok) {
     g_status = "Teleporte falhou (motivo no game.log.txt).";
     g_status_error = true;
@@ -332,7 +347,10 @@ void OnUpdate() {
   if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
   if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
-  if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) Log("1 s depois do teleporte: caminhão em " + TruckPos());
+  if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) {
+    Log("1 s depois do teleporte: caminhão em " + TruckPos());
+    if (g_release_brake) ReleaseBrake("1 s depois"); // the game may engage it again once the truck settles
+  }
 }
 
 // =================================================================================================
