@@ -196,7 +196,10 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   if (ui->UI_BeginListBox("##cargo", -1, 220)) {
     for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
       const auto& o = g_options[i];
-      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + o.src_name + " → " + o.dst_name + (o.off_market ? "   (fora do mercado)" : "");
+      char mass[24];
+      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + mass + "   ·   " + o.src_name + " → " + o.dst_name +
+                              (o.off_market ? "   (fora do mercado)" : "");
       if (!Matches(row, g_cargo_filter)) continue;
       const bool sel = g_selected == i;
       if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible

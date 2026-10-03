@@ -248,3 +248,9 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   gerador), centro da bbox do item de mapa ([empresa+0x10] +0x0c/+0x20), linha reta × escala do mapa
   19 × fator de estrada 1,2, em km. Log "distância estimada: N km". NÃO testado no jogo; calibrar
   comparando com serviços do mercado de fretes entre as mesmas cidades.
+
+# ===== v2.1 (2026-10-02) =====
+- Usuário aprovou o pagamento ("funcionou, o pagamento ficou bom"). Peso estimado da carga de volta
+  na lista (gerador da v0.6: maior carga num reboque simples compatível; `CargoMass`; linha "~N t").
+  **v2.1.0** = v2.0 + distância estimada no params+0x64 + peso. Tag `v2.1`, backup em
+  `D:\Projetos\_backupsts2-routes2.1\` + `v2.1.zip`.

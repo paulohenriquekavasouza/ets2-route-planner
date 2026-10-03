@@ -2,6 +2,7 @@
 // needs: which cargo can go from a company in city A to a company in city B.
 #pragma once
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <set>
@@ -17,6 +18,7 @@ struct RouteData {
   std::vector<Named> countries, cities, branches; // branches: tok = company, parent = city
   std::set<std::pair<std::string, std::string>> ships, receives; // (company, cargo)
   std::map<std::string, std::string> cargo_names;
+  std::map<std::string, int> cargo_mass; // kg, estimated (see tools/gen_routes.py)
 };
 
 struct RouteOption {
@@ -45,7 +47,10 @@ inline bool LoadRoutes(const std::string& path, RouteData& d) {
     else if (k == 'P' && f.size() >= 4) d.branches.push_back({f[1], f[2], f[3]});
     else if (k == 'O') d.ships.insert({f[1], f[2]});
     else if (k == 'I') d.receives.insert({f[1], f[2]});
-    else if (k == 'G') d.cargo_names[f[1]] = f[2];
+    else if (k == 'G') {
+      d.cargo_names[f[1]] = f[2];
+      if (f.size() >= 4) d.cargo_mass[f[1]] = std::atoi(f[3].c_str());
+    }
   }
   auto by_name = [](const Named& a, const Named& b) { return a.name < b.name; };
   std::sort(d.countries.begin(), d.countries.end(), by_name);
@@ -86,6 +91,11 @@ inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::stri
     return na != nb ? na < nb : a.src_name + a.dst_name < b.src_name + b.dst_name;
   });
   return out;
+}
+
+inline int CargoMass(const RouteData& d, const std::string& cargo) {
+  const auto it = d.cargo_mass.find(cargo);
+  return it == d.cargo_mass.end() ? 0 : it->second;
 }
 
 // SCS token (base 38, first character least significant), as the game's console commands parse it.
