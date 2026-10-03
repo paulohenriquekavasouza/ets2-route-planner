@@ -275,3 +275,7 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   marcada, roda `g_set_time 7 0` e `g_set_weather 0` via SPF_GameConsole_API (manifesto exige o hook
   "GameConsole"), espera 5 quadros e só então cria o serviço (o prazo conta da hora nova) e teleporta.
   Botão Iniciar travado durante a espera. NÃO testado no jogo.
+
+# ===== v2.3 (2026-10-02) =====
+- Usuário confirmou ("funcionou"): 7h + tempo limpo antes de criar o serviço. **v2.3.0**, tag `v2.3`,
+  backup em `D:\Projetos\_backupsts2-routes2.3\` + `v2.3.zip`.
