@@ -22,6 +22,7 @@ constexpr uintptr_t TAKE = 0x82eed0;      // int (params*, offer*, bool, bool, b
 constexpr uintptr_t PARAMS_DTOR = 0x82e270;
 constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
+constexpr uintptr_t FIND_COMPANY = 0x7d0df0; // company* (u64* company token, u64* city token), as the generator looks them up
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
 constexpr uintptr_t TELEPORT = 0x5ddf20;  // bool (actor*, placement*, bool, bool, bool): what company_portal ends with
 constexpr uintptr_t ACTOR_OWNER = 0x36ae6d8; // game object; +0x31b0 = the player's actor
@@ -51,6 +52,7 @@ constexpr Sig kSigs[] = {
     {PARAMS_DTOR, {0x40, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0x79, 0x68}},
     {STRING_DTOR, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x51, 0x08}},
     {FREE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
+    {FIND_COMPANY, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x7c, 0x24, 0x18}},
     {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
     {TELEPORT, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x44, 0x88, 0x44, 0x24, 0x18}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
@@ -128,9 +130,39 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
+// Freight distance between two companies, in the economy's km. Income = fixed_revenue (600) +
+// km * revenue_per_km_base (15) * revenue_coef_per_km (0.9) * cargo factors (def/economy_data.sii),
+// and the generator copies params+0x64 (float km) into offer.shortest_distance_km (u16, 0x830afc).
+// The game takes it from its navigation cache, which only knows the pairs the freight market
+// offers, so we estimate it: straight line between the two companies' map items (bbox centres,
+// [company+0x10] +0x0c min / +0x20 max) * the map scale (1 map metre = 19 m of "Europe") * a road
+// factor. Returns -1 if a company can't be found.
+// ponytail: straight line * 1.2 underestimates mountain/ferry routes; the game's own navigation
+// (route search between the two companies) would be exact if this turns out too far off.
+constexpr double MAP_SCALE = 19.0, ROAD_FACTOR = 1.2;
+inline double FreightKm(uint64_t src_co, uint64_t src_city, uint64_t dst_co, uint64_t dst_city) {
+  using FindFn = uint8_t* (*)(uint64_t* company, uint64_t* city);
+  double c[2][3] = {};
+  uint64_t keys[2][2] = {{src_co, src_city}, {dst_co, dst_city}};
+  __try {
+    for (int k = 0; k < 2; ++k) {
+      const uint8_t* company = At<FindFn>(FIND_COMPANY)(&keys[k][0], &keys[k][1]);
+      const uint8_t* item = Alive(company) ? Ptr(company, 0x10) : nullptr;
+      if (!item) return -1;
+      const float* mn = reinterpret_cast<const float*>(item + 0x0c);
+      const float* mx = reinterpret_cast<const float*>(item + 0x20);
+      for (int i = 0; i < 3; ++i) c[k][i] = (mn[i] + mx[i]) / 2.0;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+  const double dx = c[1][0] - c[0][0], dz = c[1][2] - c[0][2];
+  return std::sqrt(dx * dx + dz * dz) / 1000.0 * MAP_SCALE * ROAD_FACTOR;
+}
+
 // `code` gets the game's result code (0 = ok; 14 = trailer spot occupied, worth retrying).
-inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size,
-                     int* code) {
+inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, float km, char* err,
+                     size_t err_size, int* code) {
   *code = -1;
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
@@ -162,9 +194,9 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     q[2] = dst_co;
     q[3] = dst_city;
     q[4] = cargo;
-    // +0x64 starts at -1 (as in get_job) and both generate and take refuse a negative value
-    // with mp_job_missing_target_navigation; nothing else reads it.
-    *reinterpret_cast<float*>(p + 0x64) = 0.0f;
+    // +0x64 = route length in km (see FreightKm). It starts at -1 (as in get_job) and generate
+    // and take refuse a negative value with mp_job_missing_target_navigation.
+    *reinterpret_cast<float*>(p + 0x64) = km < 0 ? 0.0f : std::min(km, 65000.0f);
     Result r{nullptr, 1};
     WriteCode(UNITS_CHECK, kUnitsAtLeastOne, sizeof kUnitsAtLeastOne);
     __try {

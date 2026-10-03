@@ -234,3 +234,17 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - Usuário aprovou a v1.3 ("perfeito, funcionou!"): teleporte para o pátio + retry do erro 14 +
   correção do erro 18 = **v2.0.0** (tag git `v2.0`). Daqui pra frente tudo é 2.x. Backup em
   `D:\Projetos\_backupsts2-routes2.0\` + `v2.0.zip` (LEIA-ME.txt lá). A v1.0 continua em `v1.0`.
+
+## v2.1.0 (2026-10-02) — pagamento: distância real em vez de 0 km
+- Usuário: "está pagando muito pouco". Causa: o params+0x64 que eu zerava desde a v0.3 É a distância.
+  GEN 0x830ae1: `cvttss2si eax, [params+0x64]` → `mov word [oferta+0x50], ax` = **shortest_distance_km**.
+  Tabela de serialização do save (descritores {nome*, classe*, offset, tipo} em .data; atenção: o
+  offset certo de cada nome está na entrada ANTERIOR ao listá-las em sequência): job_offer_data
+  +0x50 shortest_distance_km (u16), +0x52 ferry_time, +0x54 ferry_price, +0xcc units_count,
+  +0xd0 fill_ratio; job_info: planned_distance +0x40, planned_distance_km +0x42, ferry +0x44/+0x46.
+- def/economy_data.sii: fixed_revenue 600 €, revenue_per_km_base 15, revenue_coef_per_km 0.9
+  (freight market) → com 0 km o serviço pagava só ~600 €.
+- Plugin: `game::FreightKm` acha as duas empresas com 0x7d0df0(&empresa, &cidade) (a busca do
+  gerador), centro da bbox do item de mapa ([empresa+0x10] +0x0c/+0x20), linha reta × escala do mapa
+  19 × fator de estrada 1,2, em km. Log "distância estimada: N km". NÃO testado no jogo; calibrar
+  comparando com serviços do mercado de fretes entre as mesmas cidades.

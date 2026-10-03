@@ -293,9 +293,12 @@ void RunPending() {
     char err[256] = {};
     int code = -1, tries = 0;
     bool ok = false;
+    const double km = game::FreightKm(Token(o.src_company.c_str()), Token(g_src.city.c_str()), Token(o.dst_company.c_str()),
+                                      Token(g_dst.city.c_str()));
+    Log("distância estimada: " + std::to_string(static_cast<int>(km)) + " km");
     do { // 14 = the trailer spot the game picked is occupied; it picks again on the next try
       ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()), Token(o.dst_company.c_str()),
-                          Token(o.cargo.c_str()), err, sizeof err, &code);
+                          Token(o.cargo.c_str()), static_cast<float>(km), err, sizeof err, &code);
     } while (!ok && code == 14 && ++tries < 5);
     if (tries) Log("erro 14 (vaga ocupada): " + std::to_string(tries) + " nova(s) tentativa(s)");
     char msg[512];
