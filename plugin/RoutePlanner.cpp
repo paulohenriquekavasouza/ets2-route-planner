@@ -42,8 +42,7 @@ int g_sort = SORT_CARGO;
 int g_sorted_as = -1;
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
-bool g_teleport = true;       // put the truck at the source company after starting
-bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
+bool g_any_cargo = true;     // also list cargo the chosen companies don't normally trade
 bool g_cargo_pending = false; // options still to be checked against the game's cargo list
 std::mutex g_mu;             // Draw and OnUpdate share the state above
 int g_selected = -1;
@@ -221,7 +220,6 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     ui->UI_EndListBox();
   }
   const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None;
-  ui->UI_Checkbox("Teleportar para a empresa de origem", &g_teleport);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -290,10 +288,6 @@ void RunPending() {
     std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
-    if (ok && g_teleport) {
-      const bool moved = game::TeleportToCompany(o.src_company.c_str(), g_src.city.c_str());
-      Log(std::string("teleporte para ") + o.src_company + "." + g_src.city + ": " + (moved ? "ok" : "falhou (motivo no game.log.txt)"));
-    }
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
   }

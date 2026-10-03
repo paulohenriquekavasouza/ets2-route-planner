@@ -127,3 +127,20 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - Ordenação: Carga (A–Z), Mais pesada, Mais leve, Empresa de origem, Empresa de destino
   (`SortOptions`, estável; a seleção acompanha a opção).
 - Alguns nomes PT-BR trazem `\n` literal (ex. "Paletes vazios\n") → trocado por espaço.
+
+## v0.7.0 (2026-10-02) — carga engatada na hora (modo Quick Job), erro 18 contornado
+- Teleporte via handler 0x5c9e00 rodou mas o jogo logou "Teleported from X to X" (mesma posição).
+  Removido. Usuário descobriu que, chegando à empresa (noclip `0` + Ctrl+F9 = ação `teleport` do
+  modo dev, leva o caminhão até a câmera livre), o reboque aparece.
+- **3º argumento de gerar/assumir = mercado de fretes (true) vs Quick Job (false).** Em TAKE,
+  `[rbp+0x2b0] = !r8b`; com false entra no bloco 0x82f738: sem reboque próprio calcula o spawn da
+  empresa (`0x8838f0(&pos, company+0x58, truck)`) e chama `0x6057a0` / `0x5f8560(..., &pos, 1)`,
+  que põe caminhão+reboque lá; com reboque próprio usa o reboque atual. Em GEN, r8b=true só
+  acrescenta a checagem 0x495e50 (erro 9). O `cheat get_job a b true` usa false (dil = arg4 != "true").
+  Plugin agora passa false nos dois. NÃO testado: pode vir um caminhão de Quick Job (alugado).
+- **Erro 18 (mp_job_country_cargo_allowance_issue):** GEN chama a calculadora de unidades
+  0x84f0e0 (unidades = min(volume do reboque / volume da carga, (limite de peso do reboque
+  ajustado pelos países da rota) / massa da carga)); 0 → erro 18 em 0x830bc2. Patch de 14 bytes em
+  0x830bb3 (`test eax,eax; jnz +5; mov eax,1; mov r12d,eax; jmp 0x830bcc`) aplicado só durante o
+  GEN do plugin (`__finally` restaura). `Supported()` também confere os bytes originais.
+- "Qualquer carga" vem marcado.
