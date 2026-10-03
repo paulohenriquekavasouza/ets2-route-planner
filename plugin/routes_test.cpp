@@ -1,0 +1,26 @@
+// Run by deploy.ps1. Exits non-zero on failure.
+#undef NDEBUG // asserts must run in Release too
+#include <cassert>
+#include <cstdio>
+#include <fstream>
+
+#include "routes.h"
+
+int main() {
+  const char* path = "routes_test.tsv";
+  std::ofstream(path) << "N\tgermany\tDeutschland\nC\tberlin\tBerlin\tgermany\nC\tbremen\tBremen\tgermany\n"
+                         "P\ttesco\tTesco\tberlin\nP\tkaarfor\tKaarfor\tbremen\nP\tlisette\tLisette\tbremen\n"
+                         "O\ttesco\tapples\nO\ttesco\tbeef\nI\tkaarfor\tapples\nI\tlisette\tbeef\nI\tlisette\tapples\n"
+                         "G\tapples\tApples\nG\tbeef\tBeef\n";
+  RouteData d;
+  assert(LoadRoutes(path, d));
+  assert(d.cities.size() == 2 && d.branches.size() == 3);
+  const auto o = RouteOptions(d, "berlin", "bremen");
+  assert(o.size() == 3); // apples->kaarfor, apples->lisette, beef->lisette
+  assert(o[0].cargo == "apples" && o[2].cargo == "beef" && o[2].dst_company == "lisette");
+  assert(RouteOptions(d, "bremen", "berlin").empty());
+  static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
+  assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
+  std::puts("routes_test ok");
+  return 0;
+}
