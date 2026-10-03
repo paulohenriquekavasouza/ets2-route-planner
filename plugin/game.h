@@ -35,6 +35,13 @@ constexpr unsigned char kUnitsAtLeastOne[14] = {
     0x44, 0x8b, 0xe0,             // mov r12d, eax
     0xeb, 0x0b,                   // jmp 0x830bcc (the success path)
 };
+// In take, `movzx eax,r8b; ...; xor al,1; mov [rbp+0x2b0],al` turns "freight market" into the
+// "place truck and trailer at the source company" flag that quick jobs use. Patched to `mov al,1`
+// only while we take our job: it stays a freight-market job (the player's own truck, no rental)
+// but the trailer is spawned at the company, attached, with the truck moved next to it.
+constexpr uintptr_t TAKE_PLACE_FLAG = 0x82ef99;
+constexpr unsigned char kPlaceOrig[2] = {0x34, 0x01};  // xor al, 1
+constexpr unsigned char kPlaceAlways[2] = {0xb0, 0x01}; // mov al, 1
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
 
 struct Sig {
@@ -57,7 +64,8 @@ template <class T> T At(uintptr_t rva) { return reinterpret_cast<T>(Base() + rva
 inline bool Supported() {
   for (const Sig& s : kSigs)
     if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
-  return std::memcmp(At<const void*>(UNITS_CHECK), kUnitsOrig, sizeof kUnitsOrig) == 0;
+  return std::memcmp(At<const void*>(UNITS_CHECK), kUnitsOrig, sizeof kUnitsOrig) == 0 &&
+         std::memcmp(At<const void*>(TAKE_PLACE_FLAG), kPlaceOrig, sizeof kPlaceOrig) == 0;
 }
 
 inline void WriteCode(uintptr_t rva, const unsigned char* bytes, size_t n) {
@@ -123,7 +131,8 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
-inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
+inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, bool attached, char* err,
+                     size_t err_size) {
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
   struct Result {
@@ -167,7 +176,13 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     if (r.status != 0) {
       std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
     } else {
-      const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
+      int t = -1;
+      if (attached) WriteCode(TAKE_PLACE_FLAG, kPlaceAlways, sizeof kPlaceAlways);
+      __try {
+        t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
+      } __finally {
+        if (attached) WriteCode(TAKE_PLACE_FLAG, kPlaceOrig, sizeof kPlaceOrig);
+      }
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
     }

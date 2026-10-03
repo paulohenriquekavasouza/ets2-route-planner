@@ -40,6 +40,7 @@ Side g_src, g_dst;
 char g_cargo_filter[48] = {};
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
+bool g_attached = true;       // start with the trailer already attached (see game.h, TAKE_PLACE_FLAG)
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
 bool g_cargo_pending = false; // options still to be checked against the game's cargo list
 std::mutex g_mu;             // Draw and OnUpdate share the state above
@@ -200,6 +201,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     ui->UI_EndListBox();
   }
   const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None;
+  ui->UI_Checkbox("Já sair com a carga engatada (experimental)", &g_attached);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -263,9 +265,9 @@ void RunPending() {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
     const bool ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()),
-                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), err, sizeof err);
+                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), g_attached, err, sizeof err);
     char msg[512];
-    std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
+    std::snprintf(msg, sizeof msg, "start%s %s %s.%s -> %s.%s%s: %s", g_attached ? " (engatada)" : "", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
