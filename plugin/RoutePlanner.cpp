@@ -1,6 +1,7 @@
 // RoutePlanner — SPF-Framework plugin for ETS2 1.61.1.1. F8 opens a window to pick origin and
 // destination cities (filtered by country) and a cargo, and starts that job right away; it also
 // shows and cancels the current job. Single player only.
+#include <SPF_GameConsole_API.h>
 #include <SPF_KeyBinds_API.h>
 #include <SPF_Logger_API.h>
 #include <SPF_Manifest_API.h>
@@ -42,6 +43,8 @@ std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
 bool g_teleport = true;       // drive-free: put the truck at the source company after starting
 bool g_release_brake = true;  // and release the parking brake the teleport engages
+bool g_morning = true;        // 07:00 and clear weather before the job is created (its deadline counts from then)
+int g_start_in = -1;          // frames until the job is created after the console commands (-1 = none)
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
@@ -52,7 +55,7 @@ bool g_confirm_cancel = false;
 std::string g_status;
 bool g_status_error = false;
 
-enum class Pending { None, Start, Cancel, Teleport };
+enum class Pending { None, Start, Cancel, Teleport, Create };
 Pending g_pending = Pending::None;
 
 void Log(const std::string& msg) {
@@ -209,9 +212,10 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     }
     ui->UI_EndListBox();
   }
-  const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None;
+  const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
   ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
   ui->UI_Checkbox("Soltar o freio de mão após teleportar", &g_release_brake);
+  ui->UI_Checkbox("Antes de iniciar: 7h da manhã e tempo limpo", &g_morning);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -306,7 +310,18 @@ void RunPending() {
     g_status = ok ? "Serviço cancelado." : "Não havia serviço para cancelar.";
     g_status_error = !ok;
     Log(g_status);
-  } else if (what == Pending::Start && g_selected >= 0 && g_selected < static_cast<int>(g_options.size())) {
+  } else if (what == Pending::Start) {
+    // the game's own console commands; the job is created a few frames later so it sees the new time
+    if (g_morning && g_core->console) {
+      g_core->console->GCon_ExecuteCommand("g_set_time 7 0");
+      g_core->console->GCon_ExecuteCommand("g_set_weather 0");
+      Log("antes de iniciar: g_set_time 7 0, g_set_weather 0");
+      g_start_in = 5;
+    } else {
+      g_pending = Pending::Create;
+      RunPending();
+    }
+  } else if (what == Pending::Create && g_selected >= 0 && g_selected < static_cast<int>(g_options.size())) {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
     int code = -1, tries = 0;
@@ -346,6 +361,10 @@ void OnUpdate() {
   std::lock_guard lock(g_mu);
   if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
+  if (g_start_in >= 0 && g_start_in-- == 0) {
+    g_pending = Pending::Create;
+    RunPending();
+  }
   if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
   if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) {
     Log("1 s depois do teleporte: caminhão em " + TruckPos());
@@ -382,6 +401,7 @@ void BuildManifest(SPF_Manifest_Builder_Handle* h, const SPF_Manifest_Builder_AP
   api->Policy_SetAllowUserConfig(h, true);
   api->Policy_AddConfigurableSystem(h, "ui");
   api->Defaults_SetLogging(h, "info", false);
+  api->Policy_AddRequiredHook(h, "GameConsole"); // g_set_time / g_set_weather before starting a job
   api->Defaults_AddKeybind(h, "Routes", "toggle", "keyboard", "KEY_F8", "always");
   api->Meta_AddKeybind(h, "Routes", "toggle", "Abrir planejador", "Abre/fecha a janela de rotas.");
   // name, visible, interactive, x, y, w, h, collapsed, autoscroll

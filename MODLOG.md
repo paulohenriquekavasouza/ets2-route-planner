@@ -266,3 +266,12 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 # ===== v2.2 (2026-10-02) =====
 - Usuário confirmou ("funcionou"): freio de mão solto após o teleporte. **v2.2.0**, tag `v2.2`, backup em
   `D:\Projetos\_backupsts2-routes2.2\` + `v2.2.zip`.
+
+## v2.3.0 (2026-10-02) — 7h e tempo limpo antes de criar o serviço
+- Comandos de console reais no exe: `g_set_time <horas> [minutos] ['0'|'1' tráfego]` (uso na string
+  "Usage: %s <hours> [minutes] ...", junto com "Economy not present.") e `g_set_weather 0/1` (está
+  nos atalhos de dev padrão do jogo). (`cheat ...` NÃO existe no console de varejo.)
+- Iniciar agora: se a caixa "Antes de iniciar: 7h da manhã e tempo limpo" (padrão ligada) estiver
+  marcada, roda `g_set_time 7 0` e `g_set_weather 0` via SPF_GameConsole_API (manifesto exige o hook
+  "GameConsole"), espera 5 quadros e só então cria o serviço (o prazo conta da hora nova) e teleporta.
+  Botão Iniciar travado durante a espera. NÃO testado no jogo.
