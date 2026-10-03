@@ -104,3 +104,12 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   envia o que a outra recebe). Checkbox "Qualquer carga": junta todas as cargas conhecidas, entre a
   1ª empresa de cada cidade, marcadas "(fora do mercado)". NÃO testado: o gerador pode recusar por
   reboque (erro 8) ou outro motivo; o log mostra o código.
+
+## v0.5.0 (2026-10-02) — "qualquer carga" confirmado; teleporte para a empresa
+- Usuário: "perfeito! funcionou" (qualquer carga/qualquer par). Seleção marcada com "> ".
+- Teleporte: o exe tem `cheat company_portal <empresa> <cidade>` (handler 0x5c9e00/0x5c9ea5):
+  procura `company.volatile.<empresa>.<cidade>` ("Unknown company instance"), o ponto de teleporte
+  (0x6d9980, "No teleport point found for the company"), teleporta (0x7b47b0) e depois tenta trocar
+  o GPS ("Unable to override gps while on job" — só aviso, vem depois do teleporte).
+  Plugin roda o comando pelo `SPF_GameConsole_API` logo após iniciar (checkbox, ligado por padrão);
+  manifesto exige o hook "GameConsole". NÃO testado no jogo.
