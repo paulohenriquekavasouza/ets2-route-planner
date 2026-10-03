@@ -11,7 +11,7 @@ int main() {
   std::ofstream(path) << "N\tgermany\tDeutschland\nC\tberlin\tBerlin\tgermany\nC\tbremen\tBremen\tgermany\n"
                          "P\ttesco\tTesco\tberlin\nP\tkaarfor\tKaarfor\tbremen\nP\tlisette\tLisette\tbremen\n"
                          "O\ttesco\tapples\nO\ttesco\tbeef\nI\tkaarfor\tapples\nI\tlisette\tbeef\nI\tlisette\tapples\n"
-                         "G\tapples\tApples\nG\tbeef\tBeef\n";
+                         "G\tapples\tApples\t23000\nG\tbeef\tBeef\t18000\n";
   RouteData d;
   assert(LoadRoutes(path, d));
   assert(d.cities.size() == 2 && d.branches.size() == 3);
@@ -21,6 +21,11 @@ int main() {
   assert(RouteOptions(d, "bremen", "berlin").empty());
   const auto any = RouteOptions(d, "bremen", "berlin", true); // nobody in bremen ships anything
   assert(any.size() == 2 && any[0].off_market && any[0].src_company == "kaarfor" && any[0].dst_company == "tesco");
+  auto sorted = o;
+  SortOptions(d, sorted, SORT_LIGHT);
+  assert(sorted[0].cargo == "beef" && CargoMass(d, "apples") == 23000);
+  SortOptions(d, sorted, SORT_HEAVY);
+  assert(sorted[0].cargo == "apples" && sorted[2].cargo == "beef");
   static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
   assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
   std::puts("routes_test ok");

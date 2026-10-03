@@ -113,3 +113,17 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   o GPS ("Unable to override gps while on job" — só aviso, vem depois do teleporte).
   Plugin roda o comando pelo `SPF_GameConsole_API` logo após iniciar (checkbox, ligado por padrão);
   manifesto exige o hook "GameConsole". NÃO testado no jogo.
+
+## v0.6.0 (2026-10-02) — teleporte direto, peso e ordenação
+- **Gotcha 3:** o console da versão de varejo NÃO tem o comando `cheat` (game.log:
+  `'cheat company_portal renar honningsvag' - unknown command`). Os handlers existem no exe.
+  Agora `game::TeleportToCompany` chama o handler 0x5c9e00 direto com um `array_t<string_dyn_t>`
+  falso: dados em +0x18, contagem em +0x20, strings de 32 bytes com `char*` em +8 (acessor 0x113030).
+  rcx não é lido pelo handler. Hook GameConsole não é mais pedido. NÃO testado no jogo.
+- Peso: `gen_routes.py` estima o maior carregamento num reboque simples padrão compatível
+  (`vehicle/trailer_defs/*.sii`: body_type, volume, gross_trailer_weight_limit − chassis_mass −
+  body_mass; carga: body_types[], mass, volume por unidade). É estimativa: o jogo pode sortear
+  outro reboque. Coluna 4 da linha G (kg). Ex.: Maçãs ~23 t, Cimento ~29 t, Guindaste móvel ~36 t.
+- Ordenação: Carga (A–Z), Mais pesada, Mais leve, Empresa de origem, Empresa de destino
+  (`SortOptions`, estável; a seleção acompanha a opção).
+- Alguns nomes PT-BR trazem `\n` literal (ex. "Paletes vazios\n") → trocado por espaço.

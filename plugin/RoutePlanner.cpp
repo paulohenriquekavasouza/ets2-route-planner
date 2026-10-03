@@ -1,7 +1,6 @@
 // RoutePlanner — SPF-Framework plugin for ETS2 1.61.1.1. F8 opens a window to pick origin and
 // destination cities (filtered by country) and a cargo, and starts that job right away; it also
 // shows and cancels the current job. Single player only.
-#include <SPF_GameConsole_API.h>
 #include <SPF_KeyBinds_API.h>
 #include <SPF_Logger_API.h>
 #include <SPF_Manifest_API.h>
@@ -39,6 +38,8 @@ struct Side {
 };
 Side g_src, g_dst;
 char g_cargo_filter[48] = {};
+int g_sort = SORT_CARGO;
+int g_sorted_as = -1;
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
 bool g_teleport = true;       // put the truck at the source company after starting
@@ -175,6 +176,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
   if (key != g_options_for) {
     g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
+    g_sorted_as = -1;
     g_options_for = key;
     g_selected = -1;
     g_cargo_pending = g_supported && !g_options.empty();
@@ -187,12 +189,29 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     ui->UI_TextDisabled(g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas duas cidades. Marque \"Qualquer carga\".");
     return;
   }
+  ui->UI_AlignTextToFramePadding();
+  ui->UI_Text("Ordenar");
+  ui->UI_SameLine(kLabelW, -1);
+  ui->UI_SetNextItemWidth(-1);
+  ui->UI_Combo("##sort", &g_sort, kSortNames, static_cast<int>(std::size(kSortNames)));
+  if (g_sort != g_sorted_as) { // keep the selection on the same option
+    const bool had = g_selected >= 0;
+    const RouteOption keep = had ? g_options[g_selected] : RouteOption{};
+    SortOptions(g_data, g_options, static_cast<SortBy>(g_sort));
+    g_sorted_as = g_sort;
+    g_selected = -1;
+    for (int i = 0; had && i < static_cast<int>(g_options.size()); ++i)
+      if (g_options[i].cargo == keep.cargo && g_options[i].src_company == keep.src_company && g_options[i].dst_company == keep.dst_company) g_selected = i;
+  }
   ui->UI_SetNextItemWidth(-1);
   ui->UI_InputTextWithHint("##cargo_filter", "Buscar carga ou empresa…", g_cargo_filter, sizeof g_cargo_filter, SPF_InputTextFlags{});
   if (ui->UI_BeginListBox("##cargo", -1, 220)) {
     for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
       const auto& o = g_options[i];
-      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + o.src_name + " → " + o.dst_name + (o.off_market ? "   (fora do mercado)" : "");
+      char mass[24];
+      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + mass + "   ·   " + o.src_name + " → " + o.dst_name +
+                              (o.off_market ? "   (fora do mercado)" : "");
       if (!Matches(row, g_cargo_filter)) continue;
       const bool sel = g_selected == i;
       if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible
@@ -271,11 +290,9 @@ void RunPending() {
     std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
-    // the game's own `cheat company_portal`: finds the company's teleport point and moves the truck there
-    if (ok && g_teleport && g_core->console) {
-      const std::string cmd = "cheat company_portal " + o.src_company + " " + g_src.city;
-      g_core->console->GCon_ExecuteCommand(cmd.c_str());
-      Log(cmd);
+    if (ok && g_teleport) {
+      const bool moved = game::TeleportToCompany(o.src_company.c_str(), g_src.city.c_str());
+      Log(std::string("teleporte para ") + o.src_company + "." + g_src.city + ": " + (moved ? "ok" : "falhou (motivo no game.log.txt)"));
     }
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
@@ -328,7 +345,6 @@ void BuildManifest(SPF_Manifest_Builder_Handle* h, const SPF_Manifest_Builder_AP
   api->Policy_SetAllowUserConfig(h, true);
   api->Policy_AddConfigurableSystem(h, "ui");
   api->Defaults_SetLogging(h, "info", false);
-  api->Policy_AddRequiredHook(h, "GameConsole"); // teleport via `cheat company_portal`
   api->Defaults_AddKeybind(h, "Routes", "toggle", "keyboard", "KEY_F8", "always");
   api->Meta_AddKeybind(h, "Routes", "toggle", "Abrir planejador", "Abre/fecha a janela de rotas.");
   // name, visible, interactive, x, y, w, h, collapsed, autoscroll
