@@ -262,3 +262,7 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - Plugin: caixa "Soltar o freio de mão após teleportar" (padrão ligada); zera os três campos logo após
   o teleporte e de novo 1 s depois; log com `SPF_TruckData.parking_brake` antes de cada escrita.
   NÃO testado no jogo.
+
+# ===== v2.2 (2026-10-02) =====
+- Usuário confirmou ("funcionou"): freio de mão solto após o teleporte. **v2.2.0**, tag `v2.2`, backup em
+  `D:\Projetos\_backupsts2-routes2.2\` + `v2.2.zip`.
