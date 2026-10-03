@@ -23,17 +23,25 @@ def field(text, name):
     return m.group(1).strip() if m else None
 def pretty(tok): return tok.replace("_", " ").strip().capitalize()
 
+# the game's own Portuguese strings (locale.scs extracted to <root>/locale/locale/pt_br)
+loc = {}
+for f in root.glob("locale/locale/pt_br/*.sui"):
+    loc.update(re.findall(r'key\[\]:\s*"([^"]*)"\s*val\[\]:\s*"([^"]*)"', read(f)))
+def tr(text, fallback):
+    m = re.fullmatch(r"@@(\w+)@@", text or "")
+    return loc.get(m.group(1), fallback) if m else (text or fallback)
+
 countries, cities, companies, cargo = {}, {}, {}, {}
 place, ship, recv = set(), set(), set()
 for d in defs:
     for f in d.glob("country/*.sui"):
         t = read(f)
         m = re.search(r"country\.data\.(\w+)", t)
-        if m: countries[m.group(1)] = field(t, "name") or pretty(m.group(1))
+        if m: countries[m.group(1)] = tr(field(t, "name_localized"), field(t, "name") or pretty(m.group(1)))
     for f in d.glob("city/*.sui"):
         t = read(f)
         m = re.search(r"city\.(\w+)", t)
-        if m and field(t, "country"): cities[m.group(1)] = (field(t, "city_name") or pretty(m.group(1)), field(t, "country"))
+        if m and field(t, "country"): cities[m.group(1)] = (tr(field(t, "city_name_localized"), field(t, "city_name") or pretty(m.group(1))), field(t, "country"))
     for f in d.glob("company/*.sui"):
         t = read(f)
         companies[f.stem] = field(t, "name") or companies.get(f.stem) or f.stem.upper()
@@ -48,8 +56,7 @@ for d in defs:
         t = read(f)
         m = re.search(r"cargo\.(\w+)", t)
         if m:
-            n = field(t, "name") or ""
-            cargo[m.group(1)] = pretty(m.group(1)) if n.startswith("@@") or not n else n
+            cargo[m.group(1)] = tr(field(t, "name"), pretty(m.group(1)))
 
 lines = [f"N\t{k}\t{v}" for k, v in sorted(countries.items())]
 lines += [f"C\t{k}\t{n}\t{c}" for k, (n, c) in sorted(cities.items()) if c in countries]

@@ -75,18 +75,61 @@ inline const char* ErrorName(int code) {
   return s ? s : "?";
 }
 
+using PickFn = bool (*)(void*, uint64_t*, uint64_t*);
+using VoidFn = void (*)(void*);
+
+// The game's job params struct (0x70 bytes), initialised like `cheat get_job` does. After a
+// successful pick: +0x00 source company, +0x08 source city, +0x10/+0x18 target, +0x20 cargo (tokens).
+inline void InitParams(uint8_t* p) {
+  std::memset(p, 0, 0x100);
+  *reinterpret_cast<uintptr_t*>(p + 0x30) = Base() + STRING_VTBL;
+  *reinterpret_cast<uintptr_t*>(p + 0x38) = Base() + EMPTY_STR;
+  *reinterpret_cast<uint16_t*>(p + 0x61) = 1;
+  *reinterpret_cast<float*>(p + 0x64) = *At<const float*>(PARAMS_FLOAT);
+}
+inline void FreeParams(uint8_t* p) {
+  At<VoidFn>(PARAMS_DTOR)(p);
+  At<VoidFn>(STRING_DTOR)(p + 0x30);
+}
+
+// Company pairs the game links between two cities (only these have navigation data; any other pair
+// fails with mp_job_missing_target_navigation). The game only offers a random pick, so sample it.
+// Writes up to `max` (source company, target company) token pairs; returns how many.
+inline int LinkedPairs(uint64_t src_city, uint64_t dst_city, uint64_t (*out)[2], int max) {
+  int n = 0;
+  alignas(16) uint8_t p[0x100];
+  __try {
+    if (!Player()) return 0;
+    for (int tries = 0; tries < 400; ++tries) {
+      InitParams(p);
+      uint64_t s = src_city, d = dst_city;
+      const bool picked = At<PickFn>(PICK)(p, &s, &d);
+      const uint64_t a = *reinterpret_cast<uint64_t*>(p), b = *reinterpret_cast<uint64_t*>(p + 0x10);
+      FreeParams(p);
+      if (!picked) break;
+      bool seen = false;
+      for (int i = 0; i < n && !seen; ++i) seen = out[i][0] == a && out[i][1] == b;
+      if (!seen && n < max) {
+        out[n][0] = a;
+        out[n][1] = b;
+        ++n;
+      }
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+  return n;
+}
+
 // Returns false and fills `err` if the game refused; `trace` gets the raw params the game picked.
 inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size,
                      uint64_t trace[4]) {
-  using PickFn = bool (*)(void*, uint64_t*, uint64_t*);
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
-  using VoidFn = void (*)(void*);
   struct Result {
     uint8_t* offer;
     int status;
   };
-  alignas(16) uint8_t p[0x100] = {}; // the game's params struct is 0x70 bytes
+  alignas(16) uint8_t p[0x100]; // the game's params struct is 0x70 bytes
   bool ok = false;
   __try {
     uint8_t* const player = Player();
@@ -103,25 +146,18 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     const uint8_t* truck = Ptr(Ptr(player, 0x78), 0);
     const bool own_trailer = Alive(truck) && Alive(Ptr(truck, 0x48));
 
-    *reinterpret_cast<uintptr_t*>(p + 0x30) = Base() + STRING_VTBL;
-    *reinterpret_cast<uintptr_t*>(p + 0x38) = Base() + EMPTY_STR;
-    *reinterpret_cast<uint16_t*>(p + 0x61) = 1;
-    *reinterpret_cast<float*>(p + 0x64) = *At<const float*>(PARAMS_FLOAT);
+    InitParams(p);
     uint64_t s = src_city, d = dst_city;
     if (!At<PickFn>(PICK)(p, &s, &d)) {
       std::snprintf(err, err_size, "O jogo não liga empresas entre essas duas cidades.");
     } else {
-      // The game filled (company, city) pairs for source (+0x00/+0x08) and target (+0x10/+0x18);
-      // which slot is the city is found by value, then the company slot gets our choice.
       uint64_t* q = reinterpret_cast<uint64_t*>(p);
       for (int i = 0; i < 4; ++i) trace[i] = q[i];
-      const int sc = q[0] == src_city ? 1 : q[1] == src_city ? 0 : -1;
-      const int dc = q[2] == dst_city ? 3 : q[3] == dst_city ? 2 : -1;
-      if (sc < 0 || dc < 0) {
+      if (q[1] != src_city || q[3] != dst_city) {
         std::snprintf(err, err_size, "Formato de parâmetros inesperado (veja o log).");
       } else {
-        q[sc] = src_co;
-        q[dc] = dst_co;
+        q[0] = src_co;
+        q[2] = dst_co;
         q[4] = cargo;
         Result r{nullptr, 1};
         At<GenFn>(GEN)(&r, p, true, own_trailer);
@@ -138,8 +174,7 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
         }
       }
     }
-    At<VoidFn>(PARAMS_DTOR)(p);
-    At<VoidFn>(STRING_DTOR)(p + 0x30);
+    FreeParams(p);
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     std::snprintf(err, err_size, "Exceção dentro do jogo (0x%08lX).", GetExceptionCode());
     return false;

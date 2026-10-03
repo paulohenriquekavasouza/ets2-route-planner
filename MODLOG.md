@@ -59,3 +59,24 @@ versionados); iniciar/cancelar = chamar funções do exe.
 - A conferir no jogo: (1) SPF carrega o plugin após "Recarregar Framework"; (2) cursor aparece;
   (3) params batem com as cidades (senão "Formato de parâmetros inesperado"); (4) serviço começa
   com a carga escolhida; (5) cancelar.
+
+## v0.2.0 (2026-10-02) — 1º teste do usuário
+Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
+`@@mp_job_missing_target_navigation@@ (6)`.
+- **Ordem dos params confirmada pelo log:** +0x00 empresa origem, +0x08 cidade origem, +0x10
+  empresa destino, +0x18 cidade destino (`params lkwlog calais euroflow antwerp`). Código fixo nisso.
+- **Erro 6:** o jogo só tem navegação pré-calculada entre pares de empresas "ligados"; o par escolhido
+  (nbfc.calais → cont_port.antwerp) não era. Agora, ao escolher as duas cidades, o plugin chama o
+  sorteio do jogo (0x82e0b0) 400 vezes e guarda os pares distintos; a lista de cargas só mostra
+  opções desses pares. Log: "ligações <src>|<dst>: N pares, M cargas".
+- Combos: rótulo à esquerda (Text + SameLine) e id oculto `##` — o rótulo do ImGui ficava à direita
+  e era cortado com largura -1.
+- Cursor: SPF só mostra cursor nas janelas dele; o plugin desenha uma seta no foreground (como a
+  inspeção do ets2-police).
+- **Dados de todos os DLCs + PT-BR:** sk-zk/Extractor 2026-07-29 (MIT) em `C:\Users\Paulo\tools\extractor`.
+  `extractor def.scs dlc_*.scs -S -q -p=/def -d C:\Users\Paulo\ets2-x2` e
+  `extractor locale.scs -q -D -p=/locale/pt_br -d C:\Users\Paulo\ets2-x2\locale`.
+  **Gotcha 2:** no Git Bash, `-p=/def` vira caminho do Windows → "0 extracted". Usar `MSYS_NO_PATHCONV=1`.
+  Traduções: `locale/pt_br/localization.sui` (pares `key[]`/`val[]`), chaves `@@cn_<carga>@@`,
+  `city_name_localized`, `name_localized` do país. Resultado: 36 países, 384 cidades, 1831 filiais,
+  413 cargas.

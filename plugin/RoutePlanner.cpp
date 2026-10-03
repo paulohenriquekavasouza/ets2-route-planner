@@ -10,6 +10,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <mutex>
+#include <set>
 #include <string>
 
 #include "game.h"
@@ -38,6 +40,8 @@ Side g_src, g_dst;
 char g_cargo_filter[48] = {};
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
+bool g_link_pending = false; // options still to be filtered by the pairs the game links
+std::mutex g_mu;             // Draw and OnUpdate share the state above
 int g_selected = -1;
 bool g_confirm_cancel = false;
 std::string g_status;
@@ -88,9 +92,14 @@ __declspec(noinline) void SetMouseBlocked(SPF_UI_API* ui, bool blocked) { ui->UI
 // =================================================================================================
 // Drawing
 // =================================================================================================
+constexpr float kLabelW = 70.0f;
+
 void PlaceCombos(SPF_UI_API* ui, const char* id, Side& side) {
   const Named* country = Find(g_data.countries, side.country);
-  std::string label = std::string("País##") + id;
+  std::string label = std::string("##country") + id;
+  ui->UI_AlignTextToFramePadding();
+  ui->UI_Text("País");
+  ui->UI_SameLine(kLabelW, -1);
   ui->UI_SetNextItemWidth(-1);
   if (ui->UI_BeginCombo(label.c_str(), country ? country->name.c_str() : "Todos os países", SPF_ComboFlags{})) {
     if (ui->UI_Selectable("Todos os países", side.country.empty(), SPF_SelectableFlags{}, 0, 0)) side.country.clear();
@@ -103,7 +112,10 @@ void PlaceCombos(SPF_UI_API* ui, const char* id, Side& side) {
     ui->UI_EndCombo();
   }
   const std::string city = CityLabel(side.city);
-  label = std::string("Cidade##") + id;
+  label = std::string("##city") + id;
+  ui->UI_AlignTextToFramePadding();
+  ui->UI_Text("Cidade");
+  ui->UI_SameLine(kLabelW, -1);
   ui->UI_SetNextItemWidth(-1);
   if (ui->UI_BeginCombo(label.c_str(), city.empty() ? "Escolha a cidade" : city.c_str(), SPF_ComboFlags{})) {
     ui->UI_SetNextItemWidth(-1);
@@ -161,6 +173,11 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     g_options = RouteOptions(g_data, g_src.city, g_dst.city);
     g_options_for = key;
     g_selected = -1;
+    g_link_pending = g_supported && !g_options.empty();
+  }
+  if (g_link_pending) {
+    ui->UI_TextDisabled("Consultando o jogo…");
+    return;
   }
   if (g_options.empty()) {
     ui->UI_TextDisabled("Nenhuma carga liga empresas dessas duas cidades.");
@@ -184,7 +201,17 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
 }
 
+void DrawCursor(SPF_UI_API* ui) { // SPF only shows a cursor for its own windows
+  float mx, my;
+  ui->UI_GetMousePos(&mx, &my);
+  const SPF_DrawList_Handle fg = ui->UI_GetForegroundDrawList();
+  ui->UI_DrawList_AddTriangleFilled(fg, mx, my, mx, my + 19, mx + 13, my + 13, ui->UI_ColorConvertFloat4ToU32(1, 1, 1, 1));
+  ui->UI_DrawList_AddTriangle(fg, mx, my, mx, my + 19, mx + 13, my + 13, ui->UI_ColorConvertFloat4ToU32(0, 0, 0, 1), 1.5f);
+}
+
 void Draw(SPF_UI_API* ui, void*) {
+  std::lock_guard lock(g_mu);
+  DrawCursor(ui);
   SPF_Font_Handle font = ui->UI_GetFont("rp_body");
   if (font) ui->UI_PushFont(font);
   if (!g_loaded) {
@@ -212,6 +239,17 @@ void Draw(SPF_UI_API* ui, void*) {
 // =================================================================================================
 // Game actions, run from OnUpdate
 // =================================================================================================
+// Keep only the options whose company pair the game links (others have no navigation data).
+void FilterLinked() {
+  g_link_pending = false;
+  uint64_t pairs[256][2];
+  const int n = game::LinkedPairs(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), pairs, 256);
+  std::set<std::pair<uint64_t, uint64_t>> linked;
+  for (int i = 0; i < n; ++i) linked.insert({pairs[i][0], pairs[i][1]});
+  std::erase_if(g_options, [&](const RouteOption& o) { return !linked.count({Token(o.src_company.c_str()), Token(o.dst_company.c_str())}); });
+  Log("ligações " + g_options_for + ": " + std::to_string(n) + " pares, " + std::to_string(g_options.size()) + " cargas");
+}
+
 void RunPending() {
   const Pending what = g_pending;
   g_pending = Pending::None;
@@ -248,6 +286,8 @@ void OnUpdate() {
     ui->UI_SetMouseOverride(open);
     g_mouse_taken = open;
   }
+  std::lock_guard lock(g_mu);
+  if (g_link_pending) FilterLinked();
   if (g_pending != Pending::None) RunPending();
 }
 

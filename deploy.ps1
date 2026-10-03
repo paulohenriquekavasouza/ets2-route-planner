@@ -5,7 +5,7 @@ $cmake   = 'E:\Program Files\Microsoft Visual Studio\18\Professional\Common7\IDE
 $plugin  = Join-Path $PSScriptRoot 'plugin'
 $build   = Join-Path $plugin 'build'
 $dest    = 'D:\SteamLibrary\steamapps\common\Euro Truck Simulator 2\bin\win_x64\plugins\spfPlugins\RoutePlanner'
-$extract = 'C:\Users\Paulo\ets2-extract'   # scs_extractor output, one folder per archive (never in the repo)
+$extract = 'C:\Users\Paulo\ets2-x2'   # sk-zk Extractor output: /def of every archive + /locale/pt_br (never in the repo)
 $stale   = Join-Path $build 'stale'         # same volume as $dest
 
 & $cmake -S $plugin -B $build -A x64 | Out-Null
