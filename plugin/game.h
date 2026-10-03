@@ -21,6 +21,7 @@ constexpr uintptr_t PARAMS_DTOR = 0x82e270;
 constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
+constexpr uintptr_t PORTAL = 0x5c9e00;    // bool (?, args*): handler of `cheat company_portal <company> <city>`
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
 constexpr uintptr_t STRING_VTBL = 0x21d18c0, EMPTY_STR = 0x1df110e, PARAMS_FLOAT = 0x251d65c;
 // In the generator, right after the unit calculator (0x84f0e0): `mov r12d,eax; cmp eax,1; jae ok`,
@@ -35,13 +36,6 @@ constexpr unsigned char kUnitsAtLeastOne[14] = {
     0x44, 0x8b, 0xe0,             // mov r12d, eax
     0xeb, 0x0b,                   // jmp 0x830bcc (the success path)
 };
-// In take, `movzx eax,r8b; ...; xor al,1; mov [rbp+0x2b0],al` turns "freight market" into the
-// "place truck and trailer at the source company" flag that quick jobs use. Patched to `mov al,1`
-// only while we take our job: it stays a freight-market job (the player's own truck, no rental)
-// but the trailer is spawned at the company, attached, with the truck moved next to it.
-constexpr uintptr_t TAKE_PLACE_FLAG = 0x82ef99;
-constexpr unsigned char kPlaceOrig[2] = {0x34, 0x01};  // xor al, 1
-constexpr unsigned char kPlaceAlways[2] = {0xb0, 0x01}; // mov al, 1
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
 
 struct Sig {
@@ -55,6 +49,7 @@ constexpr Sig kSigs[] = {
     {STRING_DTOR, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x51, 0x08}},
     {FREE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
     {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
+    {PORTAL, {0x40, 0x55, 0x48, 0x81, 0xec, 0xc0, 0x00, 0x00, 0x00, 0x48}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
 };
 
@@ -64,8 +59,7 @@ template <class T> T At(uintptr_t rva) { return reinterpret_cast<T>(Base() + rva
 inline bool Supported() {
   for (const Sig& s : kSigs)
     if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
-  return std::memcmp(At<const void*>(UNITS_CHECK), kUnitsOrig, sizeof kUnitsOrig) == 0 &&
-         std::memcmp(At<const void*>(TAKE_PLACE_FLAG), kPlaceOrig, sizeof kPlaceOrig) == 0;
+  return std::memcmp(At<const void*>(UNITS_CHECK), kUnitsOrig, sizeof kUnitsOrig) == 0;
 }
 
 inline void WriteCode(uintptr_t rva, const unsigned char* bytes, size_t n) {
@@ -131,8 +125,7 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
-inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, bool attached, char* err,
-                     size_t err_size) {
+inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
   struct Result {
@@ -176,13 +169,7 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     if (r.status != 0) {
       std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
     } else {
-      int t = -1;
-      if (attached) WriteCode(TAKE_PLACE_FLAG, kPlaceAlways, sizeof kPlaceAlways);
-      __try {
-        t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
-      } __finally {
-        if (attached) WriteCode(TAKE_PLACE_FLAG, kPlaceOrig, sizeof kPlaceOrig);
-      }
+      const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
     }
@@ -196,6 +183,27 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     return false;
   }
   return ok;
+}
+
+// The retail console has no `cheat` command, but its handlers are in the exe. company_portal finds
+// company.volatile.<company>.<city>, its teleport point, and moves the truck there. It reads its
+// arguments as array_t<string_dyn_t> (data at +0x18, count at +0x20, 32-byte strings, char* at +8).
+inline bool TeleportToCompany(const char* company, const char* city) {
+  struct Str {
+    uintptr_t vtbl;
+    const char* data;
+    size_t size, capacity;
+  };
+  __try {
+    const uintptr_t vt = Base() + STRING_VTBL;
+    Str argv[4] = {{vt, "cheat", 5, 0}, {vt, "company_portal", 14, 0}, {vt, company, std::strlen(company), 0}, {vt, city, std::strlen(city), 0}};
+    alignas(16) uint8_t args[0x40] = {};
+    *reinterpret_cast<Str**>(args + 0x18) = argv;
+    *reinterpret_cast<uint64_t*>(args + 0x20) = 4;
+    return At<bool (*)(void*, void*)>(PORTAL)(nullptr, args);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
 }
 
 inline bool CancelJob() {

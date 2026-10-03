@@ -40,7 +40,10 @@ Side g_src, g_dst;
 char g_cargo_filter[48] = {};
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
-bool g_attached = true;       // start with the trailer already attached (see game.h, TAKE_PLACE_FLAG)
+bool g_teleport = true;       // drive-free: put the truck at the source company after starting
+int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
+std::string g_tp_company, g_tp_city;
+int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
 bool g_cargo_pending = false; // options still to be checked against the game's cargo list
 std::mutex g_mu;             // Draw and OnUpdate share the state above
@@ -49,7 +52,7 @@ bool g_confirm_cancel = false;
 std::string g_status;
 bool g_status_error = false;
 
-enum class Pending { None, Start, Cancel };
+enum class Pending { None, Start, Cancel, Teleport };
 Pending g_pending = Pending::None;
 
 void Log(const std::string& msg) {
@@ -152,6 +155,11 @@ void DrawCurrentJob(SPF_UI_API* ui) {
                 jd.remaining_delivery_minutes % 60, static_cast<unsigned long long>(jc.income));
   ui->UI_TextDisabled(line);
   if (!g_confirm_cancel) {
+    if (ui->UI_Button("Ir até a carga (teleporte)", -1, 0)) {
+      g_tp_company = jc.source_company_id;
+      g_tp_city = jc.source_city_id;
+      g_pending = Pending::Teleport;
+    }
     if (ui->UI_Button("Cancelar serviço", -1, 0)) g_confirm_cancel = true;
   } else {
     ui->UI_TextColored(0.95f, 0.65f, 0.2f, 1.0f, "Cancelar mesmo? O jogo cobra a multa de cancelamento.");
@@ -201,7 +209,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     ui->UI_EndListBox();
   }
   const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None;
-  ui->UI_Checkbox("Já sair com a carga engatada (experimental)", &g_attached);
+  ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -253,6 +261,25 @@ void FilterUnknownCargo() {
   Log("opções " + g_options_for + ": " + std::to_string(g_options.size()));
 }
 
+std::string TruckPos() {
+  SPF_TruckData td{};
+  if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
+  char b[96];
+  std::snprintf(b, sizeof b, "[%.1f; %.1f; %.1f]", td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z);
+  return b;
+}
+
+void Teleport() {
+  const std::string before = TruckPos();
+  const bool ok = game::TeleportToCompany(g_tp_company.c_str(), g_tp_city.c_str());
+  Log("teleporte " + g_tp_company + "." + g_tp_city + ": " + (ok ? "ok" : "falhou") + ", caminhão em " + before + " -> " + TruckPos());
+  g_tp_check_in = 60; // and again a second later, in case the move is applied on a later frame
+  if (!ok) {
+    g_status = "Teleporte falhou (motivo no game.log.txt).";
+    g_status_error = true;
+  }
+}
+
 void RunPending() {
   const Pending what = g_pending;
   g_pending = Pending::None;
@@ -265,13 +292,20 @@ void RunPending() {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
     const bool ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()),
-                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), g_attached, err, sizeof err);
+                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), err, sizeof err);
     char msg[512];
-    std::snprintf(msg, sizeof msg, "start%s %s %s.%s -> %s.%s%s: %s", g_attached ? " (engatada)" : "", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
+    std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
+    if (ok && g_teleport) { // let the new job settle for a few frames first
+      g_tp_company = o.src_company;
+      g_tp_city = g_src.city;
+      g_teleport_in = 10;
+    }
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
+  } else if (what == Pending::Teleport) {
+    Teleport();
   }
 }
 
@@ -290,6 +324,8 @@ void OnUpdate() {
   std::lock_guard lock(g_mu);
   if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
+  if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
+  if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) Log("1 s depois do teleporte: caminhão em " + TruckPos());
 }
 
 // =================================================================================================

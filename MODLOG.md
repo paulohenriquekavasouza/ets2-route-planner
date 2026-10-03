@@ -197,3 +197,15 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - Patch de 2 bytes em 0x82ef99 (`34 01` → `b0 01`, `mov al,1`) só durante o TAKE do plugin, com
   `__finally`. Caixa "Já sair com a carga engatada (experimental)", ligada por padrão; desligada = v1.0.
   NÃO testado no jogo.
+
+## v1.2.0 (2026-10-02) — v1.1 falhou; v1.0 + teleporte para a empresa
+- v1.1 (patch 0x82ef99): 1ª tentativa = exceção 0xC0000005 dentro do TAKE (pega pelo SEH; estado do
+  jogo pode ter ficado inconsistente → recomendado recarregar o save); 2ª = `mp_job_trailer_not_created`
+  (14) com "Trailer position is occupied by player or trailer!" no game.log. Abandonado.
+- **Reinterpretação do teleporte "que não funcionava":** o caminhão estava a ~73 m do pátio da Renar
+  em Honningsvåg (posição [37707;2;-119822] vs. pátio [37634.9;2;-119831]) — os testes eram feitos
+  já na cidade/empresa de origem. "Teleported from A to A" também aparece em eventos normais do jogo.
+- v1.2.0 = v1.0 + teleporte via handler do `company_portal` (0x5c9e00) 10 quadros depois de iniciar
+  (caixa "Ir até a empresa de origem ao iniciar", ligada) + botão "Ir até a carga (teleporte)" no
+  serviço atual (usa source_company_id/source_city_id da telemetria). Log: posição do caminhão
+  (telemetria) antes, logo depois e 1 s depois. Testar com origem em OUTRA cidade.
