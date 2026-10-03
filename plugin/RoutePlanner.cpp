@@ -194,7 +194,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
       if (!Matches(row, g_cargo_filter)) continue;
       const bool sel = g_selected == i;
       if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible
-      if (ui->UI_Selectable((row + "##" + std::to_string(i)).c_str(), sel, SPF_SelectableFlags{}, 0, 0)) g_selected = i;
+      if (ui->UI_Selectable(((sel ? "> " : "   ") + row + "##" + std::to_string(i)).c_str(), sel, SPF_SelectableFlags{}, 0, 0)) g_selected = i;
       if (sel) ui->UI_PopStyleColor(1);
     }
     ui->UI_EndListBox();
