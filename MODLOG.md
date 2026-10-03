@@ -170,3 +170,9 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - Pedido do usuário: voltar exatamente à v0.6.0. `plugin/`, `tools/` e `deploy.ps1` = commit 6f57c23
   (com o teleporte via handler, que não funciona; "Qualquer carga" desmarcado; sem flag de GPS; sem
   patch do erro 18). v0.7–v0.9 continuam no histórico do git.
+
+## Restaurado o estado de 611e09f (2026-10-02)
+- Pedido do usuário: voltar para antes do pedido de teleporte. `plugin/`, `tools/`, `deploy.ps1` =
+  commit 611e09f (v0.4.0 + "> " na carga selecionada): sem teleporte, sem peso/ordenação, "Qualquer
+  carga" desmarcado. Iniciar/cancelar e qualquer par/carga confirmados funcionando nesse estado.
+  v0.5–v0.9 seguem no histórico.

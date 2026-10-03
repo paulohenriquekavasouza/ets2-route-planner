@@ -9,7 +9,7 @@ Lines (tab-separated):
   P company_token company_name city_token     (company present in city)
   O company_token cargo_token                (company ships it)
   I company_token cargo_token                (company receives it)
-  G cargo_token name est_mass_kg
+  G cargo_token name
 """
 import re, sys
 from pathlib import Path
@@ -18,11 +18,6 @@ root, out = Path(sys.argv[1]), Path(sys.argv[2])
 defs = [p for p in root.glob("*/**/def") if (p / "city").is_dir() or (p / "company").is_dir() or (p / "cargo").is_dir() or (p / "country").is_dir()]
 
 def read(p): return p.read_text("utf-8", "replace")
-def fields(text, name): return re.findall(rf"^\s*{name}\s*:\s*\"?([^\"\r\n]*?)\"?\s*$", text, re.M)
-def num(text, name):
-    v = field(text, name)
-    try: return float(v.split()[0]) if v else 0.0
-    except ValueError: return 0.0
 def field(text, name):
     m = re.search(rf"^\s*{name}\s*:\s*\"?([^\"\r\n]*)\"?", text, re.M)
     return m.group(1).strip() if m else None
@@ -34,11 +29,9 @@ for f in root.glob("locale/locale/pt_br/*.sui"):
     loc.update(re.findall(r'key\[\]:\s*"([^"]*)"\s*val\[\]:\s*"([^"]*)"', read(f)))
 def tr(text, fallback):
     m = re.fullmatch(r"@@(\w+)@@", text or "")
-    out = loc.get(m.group(1), fallback) if m else (text or fallback)
-    return out.replace("\\n", " ").strip()  # some UI strings carry a literal \n
+    return loc.get(m.group(1), fallback) if m else (text or fallback)
 
 countries, cities, companies, cargo = {}, {}, {}, {}
-spec, trailers = {}, []  # cargo -> (body types, unit mass, unit volume); single-trailer (body, volume, payload)
 place, ship, recv = set(), set(), set()
 for d in defs:
     for f in d.glob("country/*.sui"):
@@ -65,24 +58,12 @@ for d in defs:
         m = re.search(r"cargo\.(\w+)", t)
         if m:
             cargo[m.group(1)] = tr(field(t, "name"), pretty(m.group(1)))
-            spec[m.group(1)] = (set(fields(t, r"body_types\[\]")), num(t, "mass"), num(t, "volume"))
-    for f in d.glob("vehicle/trailer_defs/*.sii"):
-        t = read(f)
-        if (field(t, "chain_type") or "single") == "single" and field(t, "body_type"):
-            payload = num(t, "gross_trailer_weight_limit") - num(t, "chassis_mass") - num(t, "body_mass")
-            trailers.append((field(t, "body_type"), num(t, "volume"), payload))
-
-# ponytail: the heaviest load one standard single trailer takes; the game may pick another trailer
-def est_mass(c):
-    bodies, mass, vol = spec.get(c, (set(), 0.0, 0.0))
-    loads = [min(int(tv // vol), int(pl // mass)) * mass for b, tv, pl in trailers if b in bodies and mass > 0 and vol > 0]
-    return round(max(loads, default=0) or mass)
 
 lines = [f"N\t{k}\t{v}" for k, v in sorted(countries.items())]
 lines += [f"C\t{k}\t{n}\t{c}" for k, (n, c) in sorted(cities.items()) if c in countries]
 lines += [f"P\t{co}\t{companies.get(co, co.upper())}\t{ci}" for co, ci in sorted(place) if ci in cities]
 lines += [f"O\t{co}\t{cg}" for co, cg in sorted(ship) if cg in cargo]
 lines += [f"I\t{co}\t{cg}" for co, cg in sorted(recv) if cg in cargo]
-lines += [f"G\t{k}\t{v}\t{est_mass(k)}" for k, v in sorted(cargo.items())]
+lines += [f"G\t{k}\t{v}" for k, v in sorted(cargo.items())]
 out.write_text("\n".join(lines) + "\n", "utf-8")
 print(f"{len(countries)} países, {len(cities)} cidades, {len(place)} filiais, {len(cargo)} cargas -> {out}")

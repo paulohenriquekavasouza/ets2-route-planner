@@ -2,7 +2,6 @@
 // needs: which cargo can go from a company in city A to a company in city B.
 #pragma once
 #include <algorithm>
-#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <set>
@@ -18,7 +17,6 @@ struct RouteData {
   std::vector<Named> countries, cities, branches; // branches: tok = company, parent = city
   std::set<std::pair<std::string, std::string>> ships, receives; // (company, cargo)
   std::map<std::string, std::string> cargo_names;
-  std::map<std::string, int> cargo_mass; // kg, estimated (see tools/gen_routes.py)
 };
 
 struct RouteOption {
@@ -47,10 +45,7 @@ inline bool LoadRoutes(const std::string& path, RouteData& d) {
     else if (k == 'P' && f.size() >= 4) d.branches.push_back({f[1], f[2], f[3]});
     else if (k == 'O') d.ships.insert({f[1], f[2]});
     else if (k == 'I') d.receives.insert({f[1], f[2]});
-    else if (k == 'G') {
-      d.cargo_names[f[1]] = f[2];
-      if (f.size() >= 4) d.cargo_mass[f[1]] = std::atoi(f[3].c_str());
-    }
+    else if (k == 'G') d.cargo_names[f[1]] = f[2];
   }
   auto by_name = [](const Named& a, const Named& b) { return a.name < b.name; };
   std::sort(d.countries.begin(), d.countries.end(), by_name);
@@ -91,28 +86,6 @@ inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::stri
     return na != nb ? na < nb : a.src_name + a.dst_name < b.src_name + b.dst_name;
   });
   return out;
-}
-
-inline int CargoMass(const RouteData& d, const std::string& cargo) {
-  const auto it = d.cargo_mass.find(cargo);
-  return it == d.cargo_mass.end() ? 0 : it->second;
-}
-
-enum SortBy { SORT_CARGO, SORT_HEAVY, SORT_LIGHT, SORT_SRC, SORT_DST };
-inline const char* const kSortNames[] = {"Carga (A–Z)", "Mais pesada", "Mais leve", "Empresa de origem", "Empresa de destino"};
-
-// Stable, so ties keep the cargo-name order RouteOptions produced.
-inline void SortOptions(const RouteData& d, std::vector<RouteOption>& v, SortBy by) {
-  auto key = [&](const RouteOption& o) -> std::string {
-    if (by == SORT_SRC) return o.src_name;
-    if (by == SORT_DST) return o.dst_name;
-    return CargoName(d, o.cargo);
-  };
-  std::stable_sort(v.begin(), v.end(), [&](const RouteOption& a, const RouteOption& b) {
-    if (by == SORT_HEAVY) return CargoMass(d, a.cargo) > CargoMass(d, b.cargo);
-    if (by == SORT_LIGHT) return CargoMass(d, a.cargo) < CargoMass(d, b.cargo);
-    return key(a) < key(b);
-  });
 }
 
 // SCS token (base 38, first character least significant), as the game's console commands parse it.
