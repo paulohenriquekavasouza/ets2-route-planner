@@ -144,3 +144,17 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   0x830bb3 (`test eax,eax; jnz +5; mov eax,1; mov r12d,eax; jmp 0x830bcc`) aplicado só durante o
   GEN do plugin (`__finally` restaura). `Supported()` também confere os bytes originais.
 - "Qualquer carga" vem marcado.
+
+## v0.8.0 (2026-10-02) — sem caminhão alugado; GPS
+- Usuário: o modo Quick Job trocou o caminhão dele (não quer) e o GPS parou de recalcular a rota.
+- **De onde vem o caminhão alugado:** GEN com r8b=false (quick) grava o nome de um caminhão em
+  oferta+0x68 (0x830cb9: só quando não é mercado de fretes); TAKE monta o veículo do serviço com
+  `0x79b630(job, job+0x68, job+0x88, job+0xa8, ...)`. No TAKE, o caminho quick (0x82f738) só cuida do
+  reboque: sem reboque próprio cria um (0x6fe330), calcula o spawn da empresa (0x8838f0) e posiciona
+  (0x6057a0, 0x5f8560).
+- Agora: **GEN em modo mercado de fretes (true)** = sem caminhão na oferta, unidades calculadas
+  com o caminhão do jogador; **TAKE em modo quick (false)** = spawn na empresa com reboque engatado.
+  NÃO testado: pode ser que o TAKE quick dependa do caminhão da oferta.
+- Depois de assumir, a tela de fretes do jogo faz `[exe+0x36ae748]+0x254 = 1` (flag genérica de
+  "estado mudou", 65 lugares no exe a ligam, inclusive o cancelamento). O plugin agora faz igual.
+  Palpite para o GPS; não confirmado.

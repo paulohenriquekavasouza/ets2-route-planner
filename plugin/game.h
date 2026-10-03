@@ -35,6 +35,7 @@ constexpr unsigned char kUnitsAtLeastOne[14] = {
     0x44, 0x8b, 0xe0,             // mov r12d, eax
     0xeb, 0x0b,                   // jmp 0x830bcc (the success path)
 };
+constexpr uintptr_t REFRESH = 0x36ae748; // [..]+0x254: "state changed" flag the UI sets after taking/cancelling
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
 
 struct Sig {
@@ -123,8 +124,10 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
-// The 3rd argument of generate/take is "freight market" (true: drive to the pickup) vs quick job
-// (false: take puts truck and trailer at the source company's spawn point, cargo attached).
+// The 3rd argument of generate/take is "freight market" (true) vs quick job (false). Generating in
+// quick mode stores a rental truck name in the offer (+0x68) and take then hands it to the player,
+// so: generate as freight market (the player's own truck, no rental), take as quick job (take puts
+// truck and trailer at the source company's spawn point, cargo attached).
 inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
@@ -162,7 +165,7 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     Result r{nullptr, 1};
     WriteCode(UNITS_CHECK, kUnitsAtLeastOne, sizeof kUnitsAtLeastOne);
     __try {
-      At<GenFn>(GEN)(&r, p, false, own_trailer);
+      At<GenFn>(GEN)(&r, p, true, own_trailer);
     } __finally {
       WriteCode(UNITS_CHECK, kUnitsOrig, sizeof kUnitsOrig);
     }
@@ -172,6 +175,7 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
       const int t = At<TakeFn>(TAKE)(p, r.offer, false, own_trailer, false);
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
+      if (uint8_t* refresh = *At<uint8_t**>(REFRESH); ok && refresh) refresh[0x254] = 1; // as the job screen does after taking
     }
     if (r.offer) { // drop the generator's reference, exactly like get_job
       (*reinterpret_cast<VoidFn**>(r.offer))[1](r.offer);
