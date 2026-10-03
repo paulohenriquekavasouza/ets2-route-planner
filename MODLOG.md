@@ -80,3 +80,15 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   Traduções: `locale/pt_br/localization.sui` (pares `key[]`/`val[]`), chaves `@@cn_<carga>@@`,
   `city_name_localized`, `name_localized` do país. Resultado: 36 países, 384 cidades, 1831 filiais,
   413 cargas.
+
+## v0.3.0 (2026-10-02) — 2º teste: UI ok, cursor ok, mas erros 7 e 6; seleção sem destaque
+- Log: steinkjer → thessaloniki, 1 par ligado (sag_tre_pln → lefko), 3 cargas. `bob_d30` →
+  `mp_job_missing_cargo (7)`; `ter_forklift` → `mp_job_missing_target_navigation (6)` mesmo no par ligado.
+- **Erro 6 de verdade:** gerar (0x830234) e assumir (0x82f1dc) só checam `params+0x64 >= 0` e
+  nenhum dos dois lê o valor depois. O `get_job` põe -1.0 (rva 0x251d65c) → nesta build ele
+  sempre falharia. O outro chamador do gerador (0x128b160) copia +0x64 de uma struct de params pronta.
+  Agora o plugin escreve 0.0. **Verificar no jogo:** km planejados e pagamento do serviço criado.
+- **Erro 7:** gerador busca a carga por token via 0xab7840 ("cargo.%s"); morta/ausente = 7. O filtro
+  das opções agora também descarta cargas que o jogo não acha (`game::CargoExists`).
+- Seleção: o tema do SPF deixa `Header` invisível → cor própria na linha selecionada.
+- Nomes de empresa em DLC: arquivo `<co>.<dlc>.sui` → usar o nome antes do 1º ponto.

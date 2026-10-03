@@ -21,6 +21,7 @@ constexpr uintptr_t TAKE = 0x82eed0;      // int (params*, offer*, bool, bool, b
 constexpr uintptr_t PARAMS_DTOR = 0x82e270;
 constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
+constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
 constexpr uintptr_t STRING_VTBL = 0x21d18c0, EMPTY_STR = 0x1df110e, PARAMS_FLOAT = 0x251d65c;
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
@@ -36,6 +37,7 @@ constexpr Sig kSigs[] = {
     {PARAMS_DTOR, {0x40, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0x79, 0x68}},
     {STRING_DTOR, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x51, 0x08}},
     {FREE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
+    {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
 };
 
@@ -120,6 +122,15 @@ inline int LinkedPairs(uint64_t src_city, uint64_t dst_city, uint64_t (*out)[2],
   return n;
 }
 
+// Cargo the game knows about (anything else fails with mp_job_missing_cargo).
+inline bool CargoExists(uint64_t token) {
+  __try {
+    return Alive(At<uint8_t* (*)(uint64_t*)>(CARGO)(&token));
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // Returns false and fills `err` if the game refused; `trace` gets the raw params the game picked.
 inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size,
                      uint64_t trace[4]) {
@@ -159,6 +170,9 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
         q[0] = src_co;
         q[2] = dst_co;
         q[4] = cargo;
+        // +0x64 starts at -1 (as in get_job) and both generate and take refuse a negative value
+        // with mp_job_missing_target_navigation; nothing else reads it. 0 = "let the game route it".
+        *reinterpret_cast<float*>(p + 0x64) = 0.0f;
         Result r{nullptr, 1};
         At<GenFn>(GEN)(&r, p, true, own_trailer);
         if (r.status != 0) {

@@ -190,7 +190,10 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
       const auto& o = g_options[i];
       const std::string row = CargoName(g_data, o.cargo) + "   ·   " + o.src_name + " → " + o.dst_name;
       if (!Matches(row, g_cargo_filter)) continue;
-      if (ui->UI_Selectable((row + "##" + std::to_string(i)).c_str(), g_selected == i, SPF_SelectableFlags{}, 0, 0)) g_selected = i;
+      const bool sel = g_selected == i;
+      if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible
+      if (ui->UI_Selectable((row + "##" + std::to_string(i)).c_str(), sel, SPF_SelectableFlags{}, 0, 0)) g_selected = i;
+      if (sel) ui->UI_PopStyleColor(1);
     }
     ui->UI_EndListBox();
   }
@@ -246,7 +249,9 @@ void FilterLinked() {
   const int n = game::LinkedPairs(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), pairs, 256);
   std::set<std::pair<uint64_t, uint64_t>> linked;
   for (int i = 0; i < n; ++i) linked.insert({pairs[i][0], pairs[i][1]});
-  std::erase_if(g_options, [&](const RouteOption& o) { return !linked.count({Token(o.src_company.c_str()), Token(o.dst_company.c_str())}); });
+  std::erase_if(g_options, [&](const RouteOption& o) {
+    return !linked.count({Token(o.src_company.c_str()), Token(o.dst_company.c_str())}) || !game::CargoExists(Token(o.cargo.c_str()));
+  });
   Log("ligações " + g_options_for + ": " + std::to_string(n) + " pares, " + std::to_string(g_options.size()) + " cargas");
 }
 

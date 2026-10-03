@@ -44,7 +44,8 @@ for d in defs:
         if m and field(t, "country"): cities[m.group(1)] = (tr(field(t, "city_name_localized"), field(t, "city_name") or pretty(m.group(1))), field(t, "country"))
     for f in d.glob("company/*.sui"):
         t = read(f)
-        companies[f.stem] = field(t, "name") or companies.get(f.stem) or f.stem.upper()
+        co = f.name.split(".")[0]  # "acc.sui" or "sag_tre_pln.dlc_polar.sui"
+        companies[co] = field(t, "name") or companies.get(co) or co.upper()
     for f in d.glob("company/*/editor/*.sii"):
         city = field(read(f), "city")
         if city: place.add((f.parent.parent.name, city))
