@@ -176,3 +176,8 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   commit 611e09f (v0.4.0 + "> " na carga selecionada): sem teleporte, sem peso/ordenação, "Qualquer
   carga" desmarcado. Iniciar/cancelar e qualquer par/carga confirmados funcionando nesse estado.
   v0.5–v0.9 seguem no histórico.
+
+## v0.4.1 (2026-10-02) — só a correção do erro 18 sobre 611e09f
+- Patch de 14 bytes em 0x830bb3 ("0 unidades vira 1") aplicado só durante o GEN do plugin, com
+  `__finally` restaurando; `Supported()` confere os bytes originais. Resto igual a 611e09f.
+  NÃO testado no jogo.
