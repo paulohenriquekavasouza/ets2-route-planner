@@ -8,6 +8,8 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -21,7 +23,8 @@ constexpr uintptr_t PARAMS_DTOR = 0x82e270;
 constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
-constexpr uintptr_t PORTAL = 0x5c9e00;    // bool (?, args*): handler of `cheat company_portal <company> <city>`
+constexpr uintptr_t TELEPORT = 0x5ddf20;  // bool (actor*, placement*, bool, bool, bool): what company_portal ends with
+constexpr uintptr_t ACTOR_OWNER = 0x36ae6d8; // game object; +0x31b0 = the player's actor
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
 constexpr uintptr_t STRING_VTBL = 0x21d18c0, EMPTY_STR = 0x1df110e, PARAMS_FLOAT = 0x251d65c;
 // In the generator, right after the unit calculator (0x84f0e0): `mov r12d,eax; cmp eax,1; jae ok`,
@@ -49,7 +52,7 @@ constexpr Sig kSigs[] = {
     {STRING_DTOR, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x51, 0x08}},
     {FREE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
     {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
-    {PORTAL, {0x40, 0x55, 0x48, 0x81, 0xec, 0xc0, 0x00, 0x00, 0x00, 0x48}},
+    {TELEPORT, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x44, 0x88, 0x44, 0x24, 0x18}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
 };
 
@@ -125,7 +128,10 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
-inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
+// `code` gets the game's result code (0 = ok; 14 = trailer spot occupied, worth retrying).
+inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size,
+                     int* code) {
+  *code = -1;
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
   struct Result {
@@ -170,6 +176,7 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
       std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
     } else {
       const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
+      *code = t;
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
     }
@@ -185,22 +192,67 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
   return ok;
 }
 
-// The retail console has no `cheat` command, but its handlers are in the exe. company_portal finds
-// company.volatile.<company>.<city>, its teleport point, and moves the truck there. It reads its
-// arguments as array_t<string_dyn_t> (data at +0x18, count at +0x20, 32-byte strings, char* at +8).
-inline bool TeleportToCompany(const char* company, const char* city) {
-  struct Str {
-    uintptr_t vtbl;
-    const char* data;
-    size_t size, capacity;
+// Moves the player's truck into the source company's yard of the current job: 20 m in front of one
+// of its trailer spots, facing the same way, so the job trailer (spawned when the player is near)
+// ends up right behind it. Live RE (MODLOG v1.3): job = [[ctrl+0x18]+0x28]; [job+0x28] = company;
+// [company+0x10] = its map item; item+0x70/+0x78 = array of trailer-spot map nodes (pos s32x3 in
+// 1/256 m, quaternion w,x,y,z at +0x10). Teleport = 0x5ddf20(actor, placement*, 0, 0, 0) like
+// company_portal does; placement = f32 x,y,z local + i16 sector x,z (world = local + sector*512),
+// then quaternion w,x,y,z. Fills `where` with the chosen target (world x,y,z).
+inline bool TeleportToTrailerSpot(float where[3]) {
+  struct Spot {
+    double x, y, z;
+    float q[4];
+  };
+  struct Placement {
+    float x, y, z;
+    int16_t sx, sz;
+    float q[4];
   };
   __try {
-    const uintptr_t vt = Base() + STRING_VTBL;
-    Str argv[4] = {{vt, "cheat", 5, 0}, {vt, "company_portal", 14, 0}, {vt, company, std::strlen(company), 0}, {vt, city, std::strlen(city), 0}};
-    alignas(16) uint8_t args[0x40] = {};
-    *reinterpret_cast<Str**>(args + 0x18) = argv;
-    *reinterpret_cast<uint64_t*>(args + 0x20) = 4;
-    return At<bool (*)(void*, void*)>(PORTAL)(nullptr, args);
+    const uint8_t* const player = Player();
+    const uint8_t* job = player ? Ptr(player, 0x28) : nullptr;
+    const uint8_t* company = Alive(job) ? Ptr(job, 0x28) : nullptr;
+    const uint8_t* item = company ? Ptr(company, 0x10) : nullptr;
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
+    if (!item || !Alive(actor)) return false;
+    const uint8_t* const* spots = *reinterpret_cast<const uint8_t* const* const*>(item + 0x70);
+    const uint64_t n = *reinterpret_cast<const uint64_t*>(item + 0x78);
+    if (!spots || n == 0 || n > 64) return false;
+    double best_score = -1, target[3] = {};
+    Spot best{};
+    for (uint64_t i = 0; i < n; ++i) {
+      Spot s;
+      const int32_t* pos = reinterpret_cast<const int32_t*>(spots[i]);
+      s.x = pos[0] / 256.0, s.y = pos[1] / 256.0, s.z = pos[2] / 256.0;
+      std::memcpy(s.q, spots[i] + 0x10, sizeof s.q);
+      // forward = the quaternion applied to -Z (SCS convention)
+      const double w = s.q[0], x = s.q[1], y = s.q[2], z = s.q[3];
+      const double fx = -(2 * (x * z + w * y)), fy = -(2 * (y * z - w * x)), fz = -(1 - 2 * (x * x + y * y));
+      const double t[3] = {s.x + fx * 20.0, s.y + fy * 20.0, s.z + fz * 20.0};
+      // keep the spot whose target point stays farthest from every spot (least likely to be blocked)
+      double nearest = 1e18;
+      for (uint64_t j = 0; j < n; ++j) {
+        const int32_t* o = reinterpret_cast<const int32_t*>(spots[j]);
+        const double dx = o[0] / 256.0 - t[0], dz = o[2] / 256.0 - t[2];
+        nearest = std::min(nearest, dx * dx + dz * dz);
+      }
+      if (nearest > best_score) {
+        best_score = nearest;
+        best = s;
+        std::memcpy(target, t, sizeof t);
+      }
+    }
+    Placement pl{};
+    pl.sx = static_cast<int16_t>(std::floor(target[0] / 512.0 + 0.5));
+    pl.sz = static_cast<int16_t>(std::floor(target[2] / 512.0 + 0.5));
+    pl.x = static_cast<float>(target[0] - pl.sx * 512.0);
+    pl.y = static_cast<float>(target[1] + 0.5);
+    pl.z = static_cast<float>(target[2] - pl.sz * 512.0);
+    std::memcpy(pl.q, best.q, sizeof pl.q);
+    where[0] = static_cast<float>(target[0]), where[1] = pl.y, where[2] = static_cast<float>(target[2]);
+    return At<bool (*)(void*, void*, bool, bool, bool)>(TELEPORT)(actor, &pl, false, false, false);
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }

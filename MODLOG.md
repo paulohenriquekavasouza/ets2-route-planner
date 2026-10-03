@@ -209,3 +209,23 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   (caixa "Ir até a empresa de origem ao iniciar", ligada) + botão "Ir até a carga (teleporte)" no
   serviço atual (usa source_company_id/source_city_id da telemetria). Log: posição do caminhão
   (telemetria) antes, logo depois e 1 s depois. Testar com origem em OUTRA cidade.
+
+## v1.3.0 (2026-10-02) — teleporte para o pátio da empresa; retry no erro 14
+- v1.2 (handler company_portal): "falhou" em todas, caminhão parado (log com posição da telemetria).
+  `re`-probe (`scratchpad/portalcheck.py`): as checagens iniciais do handler passam → ele cai em
+  "No teleport point found for the company" (0x6d9980; portais são raros). Abandonado.
+- **RE ao vivo do serviço atual (Norrsken, Alta):** job = [[ctrl+0x18]+0x28]; **[job+0x28] = empresa**
+  (company.volatile); **[empresa+0x10] = item do mapa da empresa** (tipo 6; bbox +0x0c/+0x20;
+  +0x58 aponta de volta para a empresa). **item+0x70 (dados) / +0x78 (qtd) = vagas de reboque**:
+  ponteiros para nós do mapa (pos s32×3 em 1/256 m, quaternion w,x,y,z em +0x10, UID em +0x30).
+  Vaga [0] = [34128.9; 7.2; -113710.4] = exatamente a posição do erro 14 no game.log. O serviço não
+  guarda qual vaga usará; o reboque só nasce com o jogador perto.
+- Teleporte = `0x5ddf20(actor=[[exe+0x36ae6d8]+0x31b0], placement*, 0, 0, 0)` (o final do
+  company_portal). Placement 32 bytes: f32 x,y,z locais + i16 setor x,z (mundo = local + setor·512)
+  + quaternion (w,x,y,z; identidade em rva 0x251d990 = (1,0,0,0)).
+- Plugin: alvo = 20 m à frente de uma vaga (frente = quaternion aplicado a −Z), mesma direção, +0,5 m
+  de altura; escolhe a vaga cujo alvo fica mais longe de todas as vagas. Conferido offline com as
+  vagas de Alta: alvos caem dentro da bbox da empresa. 10 quadros após iniciar + botão "Ir até a carga".
+- Erro 14 (`mp_job_trailer_not_created`, "Trailer position is occupied"): até 5 novas tentativas
+  (na Norrsken a 2ª tentativa funcionou).
+- NÃO testado no jogo.

@@ -42,7 +42,6 @@ std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
 bool g_teleport = true;       // drive-free: put the truck at the source company after starting
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
-std::string g_tp_company, g_tp_city;
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
 bool g_cargo_pending = false; // options still to be checked against the game's cargo list
@@ -156,8 +155,6 @@ void DrawCurrentJob(SPF_UI_API* ui) {
   ui->UI_TextDisabled(line);
   if (!g_confirm_cancel) {
     if (ui->UI_Button("Ir até a carga (teleporte)", -1, 0)) {
-      g_tp_company = jc.source_company_id;
-      g_tp_city = jc.source_city_id;
       g_pending = Pending::Teleport;
     }
     if (ui->UI_Button("Cancelar serviço", -1, 0)) g_confirm_cancel = true;
@@ -271,8 +268,11 @@ std::string TruckPos() {
 
 void Teleport() {
   const std::string before = TruckPos();
-  const bool ok = game::TeleportToCompany(g_tp_company.c_str(), g_tp_city.c_str());
-  Log("teleporte " + g_tp_company + "." + g_tp_city + ": " + (ok ? "ok" : "falhou") + ", caminhão em " + before + " -> " + TruckPos());
+  float to[3] = {};
+  const bool ok = game::TeleportToTrailerSpot(to);
+  char target[96];
+  std::snprintf(target, sizeof target, "[%.1f; %.1f; %.1f]", to[0], to[1], to[2]);
+  Log(std::string("teleporte para o pátio ") + target + ": " + (ok ? "ok" : "falhou") + ", caminhão em " + before + " -> " + TruckPos());
   g_tp_check_in = 60; // and again a second later, in case the move is applied on a later frame
   if (!ok) {
     g_status = "Teleporte falhou (motivo no game.log.txt).";
@@ -291,17 +291,18 @@ void RunPending() {
   } else if (what == Pending::Start && g_selected >= 0 && g_selected < static_cast<int>(g_options.size())) {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
-    const bool ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()),
-                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), err, sizeof err);
+    int code = -1, tries = 0;
+    bool ok = false;
+    do { // 14 = the trailer spot the game picked is occupied; it picks again on the next try
+      ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()), Token(o.dst_company.c_str()),
+                          Token(o.cargo.c_str()), err, sizeof err, &code);
+    } while (!ok && code == 14 && ++tries < 5);
+    if (tries) Log("erro 14 (vaga ocupada): " + std::to_string(tries) + " nova(s) tentativa(s)");
     char msg[512];
     std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
-    if (ok && g_teleport) { // let the new job settle for a few frames first
-      g_tp_company = o.src_company;
-      g_tp_city = g_src.city;
-      g_teleport_in = 10;
-    }
+    if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
   } else if (what == Pending::Teleport) {
