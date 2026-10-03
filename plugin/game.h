@@ -23,19 +23,7 @@ constexpr uintptr_t FREE = 0xfbf00;
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
 constexpr uintptr_t STRING_VTBL = 0x21d18c0, EMPTY_STR = 0x1df110e, PARAMS_FLOAT = 0x251d65c;
-// In the generator, right after the unit calculator (0x84f0e0): `mov r12d,eax; cmp eax,1; jae ok`,
-// else mp_job_country_cargo_allowance_issue (18). 0 units = cargo too heavy/big for the trailer the
-// route's countries allow. Patched to "at least 1 unit" only while we generate our own job.
-constexpr uintptr_t UNITS_CHECK = 0x830bb3;
-constexpr unsigned char kUnitsOrig[14] = {0x44, 0x8b, 0xe0, 0x83, 0xf8, 0x01, 0x73, 0x11, 0x48, 0x8b, 0x9d, 0xe0, 0x01, 0x00};
-constexpr unsigned char kUnitsAtLeastOne[14] = {
-    0x85, 0xc0,                   // test eax, eax
-    0x75, 0x05,                   // jnz +5
-    0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
-    0x44, 0x8b, 0xe0,             // mov r12d, eax
-    0xeb, 0x0b,                   // jmp 0x830bcc (the success path)
-};
-constexpr uintptr_t REFRESH = 0x36ae748; // [..]+0x254: "state changed" flag the UI sets after taking/cancelling
+constexpr uintptr_t REFRESH = 0x36ae748; // [..]+0x254: "state changed" flag the job screen sets after taking a job
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
 
 struct Sig {
@@ -58,16 +46,7 @@ template <class T> T At(uintptr_t rva) { return reinterpret_cast<T>(Base() + rva
 inline bool Supported() {
   for (const Sig& s : kSigs)
     if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
-  return std::memcmp(At<const void*>(UNITS_CHECK), kUnitsOrig, sizeof kUnitsOrig) == 0;
-}
-
-inline void WriteCode(uintptr_t rva, const unsigned char* bytes, size_t n) {
-  void* at = At<void*>(rva);
-  DWORD old;
-  VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &old);
-  std::memcpy(at, bytes, n);
-  VirtualProtect(at, n, old, &old);
-  FlushInstructionCache(GetCurrentProcess(), at, n);
+  return true;
 }
 
 // Engine objects carry a "valid" bit in the top bit of the dword at +8.
@@ -124,10 +103,6 @@ inline bool CargoExists(uint64_t token) {
 
 // Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
 // freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
-// The 3rd argument of generate/take is "freight market" (true) vs quick job (false). Generating in
-// quick mode stores a rental truck name in the offer (+0x68) and take then hands it to the player,
-// so: generate as freight market (the player's own truck, no rental), take as quick job (take puts
-// truck and trailer at the source company's spawn point, cargo attached).
 inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
@@ -163,19 +138,14 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     // with mp_job_missing_target_navigation; nothing else reads it.
     *reinterpret_cast<float*>(p + 0x64) = 0.0f;
     Result r{nullptr, 1};
-    WriteCode(UNITS_CHECK, kUnitsAtLeastOne, sizeof kUnitsAtLeastOne);
-    __try {
-      At<GenFn>(GEN)(&r, p, true, own_trailer);
-    } __finally {
-      WriteCode(UNITS_CHECK, kUnitsOrig, sizeof kUnitsOrig);
-    }
+    At<GenFn>(GEN)(&r, p, true, own_trailer);
     if (r.status != 0) {
       std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
     } else {
-      const int t = At<TakeFn>(TAKE)(p, r.offer, false, own_trailer, false);
+      const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
-      if (uint8_t* refresh = *At<uint8_t**>(REFRESH); ok && refresh) refresh[0x254] = 1; // as the job screen does after taking
+      if (uint8_t* refresh = *At<uint8_t**>(REFRESH); ok && refresh) refresh[0x254] = 1; // as the job screen does (GPS refresh?)
     }
     if (r.offer) { // drop the generator's reference, exactly like get_job
       (*reinterpret_cast<VoidFn**>(r.offer))[1](r.offer);
