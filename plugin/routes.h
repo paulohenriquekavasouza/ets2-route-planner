@@ -21,6 +21,7 @@ struct RouteData {
 
 struct RouteOption {
   std::string cargo, src_company, src_name, dst_company, dst_name;
+  bool off_market = false; // the companies don't normally trade this cargo
 };
 
 inline std::vector<std::string> SplitTabs(const std::string& line) {
@@ -57,8 +58,9 @@ inline std::string CargoName(const RouteData& d, const std::string& cargo) {
   return it == d.cargo_names.end() ? cargo : it->second;
 }
 
-// Every (cargo, shipper in src_city, receiver in dst_city), sorted by cargo name.
-inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::string& src_city, const std::string& dst_city) {
+// Every (cargo, shipper in src_city, receiver in dst_city), sorted by cargo name. With `any_cargo`,
+// every other cargo too, between the first companies of each city (marked off_market).
+inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::string& src_city, const std::string& dst_city, bool any_cargo = false) {
   std::vector<RouteOption> out;
   for (const auto& s : d.branches) {
     if (s.parent != src_city) continue;
@@ -66,6 +68,18 @@ inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::stri
       for (const auto& r : d.branches)
         if (r.parent == dst_city && !(r.tok == s.tok && src_city == dst_city) && d.receives.count({r.tok, it->second}))
           out.push_back({it->second, s.tok, s.name, r.tok, r.name});
+  }
+  if (any_cargo) {
+    const Named *s = nullptr, *r = nullptr;
+    for (const auto& b : d.branches) {
+      if (!s && b.parent == src_city) s = &b;
+      if (!r && b.parent == dst_city && (!s || b.tok != s->tok || src_city != dst_city)) r = &b;
+    }
+    std::set<std::string> have;
+    for (const auto& o : out) have.insert(o.cargo);
+    if (s && r)
+      for (const auto& [cargo, name] : d.cargo_names)
+        if (!have.count(cargo)) out.push_back({cargo, s->tok, s->name, r->tok, r->name, true});
   }
   std::sort(out.begin(), out.end(), [&](const RouteOption& a, const RouteOption& b) {
     const auto na = CargoName(d, a.cargo), nb = CargoName(d, b.cargo);

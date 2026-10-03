@@ -19,6 +19,8 @@ int main() {
   assert(o.size() == 3); // apples->kaarfor, apples->lisette, beef->lisette
   assert(o[0].cargo == "apples" && o[2].cargo == "beef" && o[2].dst_company == "lisette");
   assert(RouteOptions(d, "bremen", "berlin").empty());
+  const auto any = RouteOptions(d, "bremen", "berlin", true); // nobody in bremen ships anything
+  assert(any.size() == 2 && any[0].off_market && any[0].src_company == "kaarfor" && any[0].dst_company == "tesco");
   static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
   assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
   std::puts("routes_test ok");

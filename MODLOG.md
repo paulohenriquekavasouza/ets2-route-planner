@@ -92,3 +92,15 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   das opções agora também descarta cargas que o jogo não acha (`game::CargoExists`).
 - Seleção: o tema do SPF deixa `Header` invisível → cor própria na linha selecionada.
 - Nomes de empresa em DLC: arquivo `<co>.<dlc>.sui` → usar o nome antes do 1º ponto.
+
+## v0.4.0 (2026-10-02) — 3º teste: iniciar e cancelar FUNCIONAM
+- Confirmado no jogo: `rice_c renar.steinkjer -> cont_port.durres: ok` com a carga certa; "Serviço
+  cancelado." funcionou. O fix de +0x64 = 0.0 resolveu o erro 6.
+- O "pares ligados" era falso: 0x82e0b0 devolve sempre o MESMO par por par de cidades (400 chamadas
+  → 1 par distinto). O 1º erro 6 (nbfc → cont_port) vinha do -1 em +0x64, não do par. Removidos o
+  filtro e a chamada a 0x82e0b0: params são preenchidos direto (+0 empresa, +8 cidade, +0x10, +0x18,
+  +0x20 carga).
+- Pedido: qualquer carga entre quaisquer cidades (ex.: Honningsvåg → Iráklio, onde nenhuma empresa
+  envia o que a outra recebe). Checkbox "Qualquer carga": junta todas as cargas conhecidas, entre a
+  1ª empresa de cada cidade, marcadas "(fora do mercado)". NÃO testado: o gerador pode recusar por
+  reboque (erro 8) ou outro motivo; o log mostra o código.

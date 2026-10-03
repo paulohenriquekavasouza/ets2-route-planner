@@ -15,7 +15,6 @@
 namespace game {
 
 constexpr uintptr_t CTRL = 0x3045760;     // game/economy controller pointer
-constexpr uintptr_t PICK = 0x82e0b0;      // bool (params*, u64* src_city, u64* dst_city): random linked companies
 constexpr uintptr_t GEN = 0x82ffb0;       // void (result*, params*, bool, bool): generate job offer
 constexpr uintptr_t TAKE = 0x82eed0;      // int (params*, offer*, bool, bool, bool): take it, 0 = ok
 constexpr uintptr_t PARAMS_DTOR = 0x82e270;
@@ -31,7 +30,6 @@ struct Sig {
   unsigned char bytes[10];
 };
 constexpr Sig kSigs[] = {
-    {PICK, {0x40, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xec, 0x70, 0x48}},
     {GEN, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x44, 0x88, 0x44, 0x24, 0x18}},
     {TAKE, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x44, 0x88, 0x44, 0x24, 0x18}},
     {PARAMS_DTOR, {0x40, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x83, 0x79, 0x68}},
@@ -77,11 +75,10 @@ inline const char* ErrorName(int code) {
   return s ? s : "?";
 }
 
-using PickFn = bool (*)(void*, uint64_t*, uint64_t*);
 using VoidFn = void (*)(void*);
 
-// The game's job params struct (0x70 bytes), initialised like `cheat get_job` does. After a
-// successful pick: +0x00 source company, +0x08 source city, +0x10/+0x18 target, +0x20 cargo (tokens).
+// The game's job params struct (0x70 bytes), initialised like `cheat get_job` does:
+// +0x00 source company, +0x08 source city, +0x10/+0x18 target, +0x20 cargo (tokens).
 inline void InitParams(uint8_t* p) {
   std::memset(p, 0, 0x100);
   *reinterpret_cast<uintptr_t*>(p + 0x30) = Base() + STRING_VTBL;
@@ -94,34 +91,6 @@ inline void FreeParams(uint8_t* p) {
   At<VoidFn>(STRING_DTOR)(p + 0x30);
 }
 
-// Company pairs the game links between two cities (only these have navigation data; any other pair
-// fails with mp_job_missing_target_navigation). The game only offers a random pick, so sample it.
-// Writes up to `max` (source company, target company) token pairs; returns how many.
-inline int LinkedPairs(uint64_t src_city, uint64_t dst_city, uint64_t (*out)[2], int max) {
-  int n = 0;
-  alignas(16) uint8_t p[0x100];
-  __try {
-    if (!Player()) return 0;
-    for (int tries = 0; tries < 400; ++tries) {
-      InitParams(p);
-      uint64_t s = src_city, d = dst_city;
-      const bool picked = At<PickFn>(PICK)(p, &s, &d);
-      const uint64_t a = *reinterpret_cast<uint64_t*>(p), b = *reinterpret_cast<uint64_t*>(p + 0x10);
-      FreeParams(p);
-      if (!picked) break;
-      bool seen = false;
-      for (int i = 0; i < n && !seen; ++i) seen = out[i][0] == a && out[i][1] == b;
-      if (!seen && n < max) {
-        out[n][0] = a;
-        out[n][1] = b;
-        ++n;
-      }
-    }
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-  }
-  return n;
-}
-
 // Cargo the game knows about (anything else fails with mp_job_missing_cargo).
 inline bool CargoExists(uint64_t token) {
   __try {
@@ -131,9 +100,9 @@ inline bool CargoExists(uint64_t token) {
   }
 }
 
-// Returns false and fills `err` if the game refused; `trace` gets the raw params the game picked.
-inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size,
-                     uint64_t trace[4]) {
+// Returns false and fills `err` if the game refused. Any company pair works, not only the ones the
+// freight market pairs up (get_job's 0x82e0b0 only ever picks one pair per city pair).
+inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint64_t dst_co, uint64_t cargo, char* err, size_t err_size) {
   using GenFn = void (*)(void*, void*, bool, bool);
   using TakeFn = int (*)(void*, void*, bool, bool, bool);
   struct Result {
@@ -158,35 +127,27 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     const bool own_trailer = Alive(truck) && Alive(Ptr(truck, 0x48));
 
     InitParams(p);
-    uint64_t s = src_city, d = dst_city;
-    if (!At<PickFn>(PICK)(p, &s, &d)) {
-      std::snprintf(err, err_size, "O jogo não liga empresas entre essas duas cidades.");
+    uint64_t* q = reinterpret_cast<uint64_t*>(p);
+    q[0] = src_co;
+    q[1] = src_city;
+    q[2] = dst_co;
+    q[3] = dst_city;
+    q[4] = cargo;
+    // +0x64 starts at -1 (as in get_job) and both generate and take refuse a negative value
+    // with mp_job_missing_target_navigation; nothing else reads it.
+    *reinterpret_cast<float*>(p + 0x64) = 0.0f;
+    Result r{nullptr, 1};
+    At<GenFn>(GEN)(&r, p, true, own_trailer);
+    if (r.status != 0) {
+      std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
     } else {
-      uint64_t* q = reinterpret_cast<uint64_t*>(p);
-      for (int i = 0; i < 4; ++i) trace[i] = q[i];
-      if (q[1] != src_city || q[3] != dst_city) {
-        std::snprintf(err, err_size, "Formato de parâmetros inesperado (veja o log).");
-      } else {
-        q[0] = src_co;
-        q[2] = dst_co;
-        q[4] = cargo;
-        // +0x64 starts at -1 (as in get_job) and both generate and take refuse a negative value
-        // with mp_job_missing_target_navigation; nothing else reads it. 0 = "let the game route it".
-        *reinterpret_cast<float*>(p + 0x64) = 0.0f;
-        Result r{nullptr, 1};
-        At<GenFn>(GEN)(&r, p, true, own_trailer);
-        if (r.status != 0) {
-          std::snprintf(err, err_size, "Não deu para gerar o serviço: %s (%d)", ErrorName(r.status), r.status);
-        } else {
-          const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
-          if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
-          ok = t == 0;
-        }
-        if (r.offer) { // drop the generator's reference, exactly like get_job
-          (*reinterpret_cast<VoidFn**>(r.offer))[1](r.offer);
-          if ((InterlockedDecrement(reinterpret_cast<volatile LONG*>(r.offer + 8)) & 0x1ffffff) == 0) At<VoidFn>(FREE)(r.offer);
-        }
-      }
+      const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
+      if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
+      ok = t == 0;
+    }
+    if (r.offer) { // drop the generator's reference, exactly like get_job
+      (*reinterpret_cast<VoidFn**>(r.offer))[1](r.offer);
+      if ((InterlockedDecrement(reinterpret_cast<volatile LONG*>(r.offer + 8)) & 0x1ffffff) == 0) At<VoidFn>(FREE)(r.offer);
     }
     FreeParams(p);
   } __except (EXCEPTION_EXECUTE_HANDLER) {

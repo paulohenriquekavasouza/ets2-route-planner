@@ -40,7 +40,8 @@ Side g_src, g_dst;
 char g_cargo_filter[48] = {};
 std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
-bool g_link_pending = false; // options still to be filtered by the pairs the game links
+bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
+bool g_cargo_pending = false; // options still to be checked against the game's cargo list
 std::mutex g_mu;             // Draw and OnUpdate share the state above
 int g_selected = -1;
 bool g_confirm_cancel = false;
@@ -168,19 +169,20 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     ui->UI_TextDisabled("Escolha origem e destino.");
     return;
   }
-  const std::string key = g_src.city + "|" + g_dst.city;
+  ui->UI_Checkbox("Qualquer carga (mesmo que as empresas não a negociem)", &g_any_cargo);
+  const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
   if (key != g_options_for) {
-    g_options = RouteOptions(g_data, g_src.city, g_dst.city);
+    g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
     g_options_for = key;
     g_selected = -1;
-    g_link_pending = g_supported && !g_options.empty();
+    g_cargo_pending = g_supported && !g_options.empty();
   }
-  if (g_link_pending) {
+  if (g_cargo_pending) {
     ui->UI_TextDisabled("Consultando o jogo…");
     return;
   }
   if (g_options.empty()) {
-    ui->UI_TextDisabled("Nenhuma carga liga empresas dessas duas cidades.");
+    ui->UI_TextDisabled(g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas duas cidades. Marque \"Qualquer carga\".");
     return;
   }
   ui->UI_SetNextItemWidth(-1);
@@ -188,7 +190,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   if (ui->UI_BeginListBox("##cargo", -1, 220)) {
     for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
       const auto& o = g_options[i];
-      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + o.src_name + " → " + o.dst_name;
+      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + o.src_name + " → " + o.dst_name + (o.off_market ? "   (fora do mercado)" : "");
       if (!Matches(row, g_cargo_filter)) continue;
       const bool sel = g_selected == i;
       if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible
@@ -242,17 +244,11 @@ void Draw(SPF_UI_API* ui, void*) {
 // =================================================================================================
 // Game actions, run from OnUpdate
 // =================================================================================================
-// Keep only the options whose company pair the game links (others have no navigation data).
-void FilterLinked() {
-  g_link_pending = false;
-  uint64_t pairs[256][2];
-  const int n = game::LinkedPairs(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), pairs, 256);
-  std::set<std::pair<uint64_t, uint64_t>> linked;
-  for (int i = 0; i < n; ++i) linked.insert({pairs[i][0], pairs[i][1]});
-  std::erase_if(g_options, [&](const RouteOption& o) {
-    return !linked.count({Token(o.src_company.c_str()), Token(o.dst_company.c_str())}) || !game::CargoExists(Token(o.cargo.c_str()));
-  });
-  Log("ligações " + g_options_for + ": " + std::to_string(n) + " pares, " + std::to_string(g_options.size()) + " cargas");
+// Drop cargo the game doesn't know (mp_job_missing_cargo).
+void FilterUnknownCargo() {
+  g_cargo_pending = false;
+  std::erase_if(g_options, [](const RouteOption& o) { return !game::CargoExists(Token(o.cargo.c_str())); });
+  Log("opções " + g_options_for + ": " + std::to_string(g_options.size()));
 }
 
 void RunPending() {
@@ -266,13 +262,11 @@ void RunPending() {
   } else if (what == Pending::Start && g_selected >= 0 && g_selected < static_cast<int>(g_options.size())) {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
-    uint64_t trace[4] = {};
     const bool ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()),
-                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), err, sizeof err, trace);
+                                   Token(o.dst_company.c_str()), Token(o.cargo.c_str()), err, sizeof err);
     char msg[512];
-    std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s: %s | params %s %s %s %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(),
-                  o.dst_company.c_str(), g_dst.city.c_str(), ok ? "ok" : err, Untoken(trace[0]).c_str(), Untoken(trace[1]).c_str(),
-                  Untoken(trace[2]).c_str(), Untoken(trace[3]).c_str());
+    std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
+                  g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
@@ -292,7 +286,7 @@ void OnUpdate() {
     g_mouse_taken = open;
   }
   std::lock_guard lock(g_mu);
-  if (g_link_pending) FilterLinked();
+  if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
 }
 
