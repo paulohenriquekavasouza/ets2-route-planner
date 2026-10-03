@@ -165,3 +165,8 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   game.h e RoutePlanner.cpp restaurados da v0.6.0 (6f57c23): GEN(true) + TAKE(true), sem o patch do
   erro 18 (fica para depois, se ele pedir). Mantido: teleporte removido (ele pediu), "Qualquer carga"
   marcado por padrão, flag `[exe+0x36ae748]+0x254 = 1` após assumir (palpite para o GPS).
+
+## v0.6 restaurada (2026-10-02)
+- Pedido do usuário: voltar exatamente à v0.6.0. `plugin/`, `tools/` e `deploy.ps1` = commit 6f57c23
+  (com o teleporte via handler, que não funciona; "Qualquer carga" desmarcado; sem flag de GPS; sem
+  patch do erro 18). v0.7–v0.9 continuam no histórico do git.

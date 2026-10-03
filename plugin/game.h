@@ -21,9 +21,9 @@ constexpr uintptr_t PARAMS_DTOR = 0x82e270;
 constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
+constexpr uintptr_t PORTAL = 0x5c9e00;    // bool (?, args*): handler of `cheat company_portal <company> <city>`
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
 constexpr uintptr_t STRING_VTBL = 0x21d18c0, EMPTY_STR = 0x1df110e, PARAMS_FLOAT = 0x251d65c;
-constexpr uintptr_t REFRESH = 0x36ae748; // [..]+0x254: "state changed" flag the job screen sets after taking a job
 constexpr uintptr_t ERROR_NAMES = 0x1e1a830; // const char* [] indexed by the result codes
 
 struct Sig {
@@ -37,6 +37,7 @@ constexpr Sig kSigs[] = {
     {STRING_DTOR, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x51, 0x08}},
     {FREE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
     {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
+    {PORTAL, {0x40, 0x55, 0x48, 0x81, 0xec, 0xc0, 0x00, 0x00, 0x00, 0x48}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
 };
 
@@ -145,7 +146,6 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
       const int t = At<TakeFn>(TAKE)(p, r.offer, true, own_trailer, false);
       if (t != 0) std::snprintf(err, err_size, "Não deu para assumir o serviço: %s (%d)", ErrorName(t), t);
       ok = t == 0;
-      if (uint8_t* refresh = *At<uint8_t**>(REFRESH); ok && refresh) refresh[0x254] = 1; // as the job screen does (GPS refresh?)
     }
     if (r.offer) { // drop the generator's reference, exactly like get_job
       (*reinterpret_cast<VoidFn**>(r.offer))[1](r.offer);
@@ -157,6 +157,27 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
     return false;
   }
   return ok;
+}
+
+// The retail console has no `cheat` command, but its handlers are in the exe. company_portal finds
+// company.volatile.<company>.<city>, its teleport point, and moves the truck there. It reads its
+// arguments as array_t<string_dyn_t> (data at +0x18, count at +0x20, 32-byte strings, char* at +8).
+inline bool TeleportToCompany(const char* company, const char* city) {
+  struct Str {
+    uintptr_t vtbl;
+    const char* data;
+    size_t size, capacity;
+  };
+  __try {
+    const uintptr_t vt = Base() + STRING_VTBL;
+    Str argv[4] = {{vt, "cheat", 5, 0}, {vt, "company_portal", 14, 0}, {vt, company, std::strlen(company), 0}, {vt, city, std::strlen(city), 0}};
+    alignas(16) uint8_t args[0x40] = {};
+    *reinterpret_cast<Str**>(args + 0x18) = argv;
+    *reinterpret_cast<uint64_t*>(args + 0x20) = 4;
+    return At<bool (*)(void*, void*)>(PORTAL)(nullptr, args);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
 }
 
 inline bool CancelJob() {
