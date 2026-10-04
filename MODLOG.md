@@ -504,3 +504,18 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   No OnUnload nada é chamado → curvas ainda forçadas ficam assim até reiniciar o jogo (dispensar antes).
 - Faixa do spawn: `Place::Good` agora exige ≤ 1,8 m de lado (antes 2,5; faixas têm 3,5–4,5 m).
 - NÃO testado no jogo.
+
+## v2.6.3 (branch `escolta`, 2026-10-04) — retorno: projeção com memória; diagnóstico da curva
+- Teste da v2.6.2: "segue bem", mas num retorno o carro não seguiu. Log: NENHUMA linha "curva forçada" (a busca
+  `CurveAt` nunca devolveu curva; quando virou junto foi escolha da IA) e a distância atrás pulando
+  (32 → 146 → 192 → 24 → 287 → 376 m) com o carro a < 3 m do rastro → "saiu do nosso caminho" e troca.
+- **Causa do salto:** depois de um retorno (ou 2ª volta na mesma rua) há dois trechos do rastro lado a lado e o
+  "ponto mais próximo" caía no trecho errado. `Trail::Project(p, out, hint)`: com a distância atrás da última
+  vez (`slot.hint`), só considera o trecho a ±40 m dela (se o carro estiver a ≤ 12 m dele); senão, o mais próximo.
+  O hint nasce com a distância pedida no spawn e é atualizado enquanto o carro está no rastro. Teste novo (retorno).
+- **Diagnóstico de `CurveAt`:** agora devolve a etapa em que parou (1 sem gerente, 2 sem item do mapa, 3 item sem
+  objeto de tráfego, 4 nenhuma faixa, 5 faixa de estrada comum, 6 sem acesso de IA, 7 curva forçável, 9 exceção) e
+  o tipo da faixa; o plugin loga "sob o caminhão: etapa N, tipo …" a cada mudança. Serve para descobrir por que
+  nada foi forçado (hipóteses: tipo diferente de 0x500000 também nas ruas, raio/altura da busca, índice virtual).
+- Outras coisas vistas no log: muitos spawns seguidos na contramão ("sentido -1.0") em pista dupla — rejeitados
+  certo, mas ruidoso; um carro "6 m atrás" ao pedir 50 m (mesma ambiguidade do rastro).

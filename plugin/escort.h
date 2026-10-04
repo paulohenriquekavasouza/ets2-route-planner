@@ -201,7 +201,10 @@ struct Curve {
 };
 
 // The forceable curve at `p`: the one a vehicle standing there is driving. Empty on plain road.
-inline Curve CurveAt(const Vec& p) {
+// `why` (optional) gets how far the lookup went: 1 no traffic manager, 2 no map item there, 3 the item has
+// no traffic object, 4 no lane found, 5 a plain road lane, 6 no AI access, 7 a forceable curve, 9 exception;
+// `type` gets the lane's type id.
+inline Curve CurveAt(const Vec& p, int* why = nullptr, int* type = nullptr) {
   struct Pos {
     float x, y, z;
     int16_t sx, sz;
@@ -211,10 +214,12 @@ inline Curve CurveAt(const Vec& p) {
     uint8_t* item;
     float dist;
   };
+  using ItemAtFn = void* (*)(void*, bool, float, bool);
+  using NearestFn = bool (*)(void*, Found*, Pos*, uint32_t);
+  int stage = 1, kind = 0;
   Curve out;
   __try {
     uint8_t* const mgr = *game::At<uint8_t**>(TRAFFIC);
-    if (!mgr) return out;
     Pos pos{};
     pos.sx = static_cast<int16_t>(std::floor(p.x / 512.0));
     pos.sz = static_cast<int16_t>(std::floor(p.z / 512.0));
@@ -222,23 +227,41 @@ inline Curve CurveAt(const Vec& p) {
     pos.y = static_cast<float>(p.y);
     pos.z = static_cast<float>(p.z - pos.sz * 512.0);
     pos.q[0] = 1.0f;
-    using ItemAtFn = void* (*)(void*, bool, float, bool);
-    void* map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 8.0f, false);
-    if (!map_item) map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 20.0f, true);
-    if (!map_item) return out;
-    uint8_t* const owner = game::At<uint8_t* (*)(void*, void*)>(TRAFFIC_OBJECT)(mgr, map_item);
-    if (!owner) return out;
     Found found{nullptr, -1.0f};
-    using NearestFn = bool (*)(void*, Found*, Pos*, uint32_t);
-    if (!(*reinterpret_cast<NearestFn**>(owner))[16](owner, &found, &pos, 0x8000) || !found.item) return out;
-    void** vt = *reinterpret_cast<void***>(found.item);
-    if (reinterpret_cast<int (*)(void*)>(vt[1])(found.item) == LANE_ROAD) return out;
-    const uint64_t* access = reinterpret_cast<const uint64_t* (*)(void*)>(vt[8])(found.item);
-    if (!access || !(*access & AI_ACCESS)) return out;
-    out = {found.item, owner};
+    void* map_item = nullptr;
+    uint8_t* owner = nullptr;
+    if (mgr) {
+      stage = 2;
+      map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 8.0f, false);
+      if (!map_item) map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 20.0f, true);
+    }
+    if (map_item) {
+      stage = 3;
+      owner = game::At<uint8_t* (*)(void*, void*)>(TRAFFIC_OBJECT)(mgr, map_item);
+    }
+    if (owner) {
+      stage = 4;
+      if (!(*reinterpret_cast<NearestFn**>(owner))[16](owner, &found, &pos, 0x8000)) found.item = nullptr;
+    }
+    if (found.item) {
+      void** vt = *reinterpret_cast<void***>(found.item);
+      kind = reinterpret_cast<int (*)(void*)>(vt[1])(found.item);
+      stage = 5;
+      if (kind != LANE_ROAD) {
+        const uint64_t* access = reinterpret_cast<const uint64_t* (*)(void*)>(vt[8])(found.item);
+        stage = 6;
+        if (access && (*access & AI_ACCESS)) {
+          stage = 7;
+          out = {found.item, owner};
+        }
+      }
+    }
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     out = {};
+    stage = 9;
   }
+  if (why) *why = stage;
+  if (type) *type = kind;
   return out;
 }
 
@@ -310,20 +333,25 @@ struct Trail {
   }
 
   // Where `p` is relative to the trail. False while the trail has fewer than two points.
-  bool Project(const Vec& p, Projection* out) const {
+  // After a U-turn (or a second lap of the same road) two stretches of trail run side by side, and
+  // the nearest point may be on the wrong one. `hint` is how far behind the car was last time: with it,
+  // only the stretch within HINT_WINDOW of that is considered (if the car is near it at all).
+  static constexpr double HINT_WINDOW = 40.0;
+  bool Project(const Vec& p, Projection* out, double hint = -1) const {
     if (pts.size() < 2) return false;
-    size_t best = 0;
-    double best_d2 = 1e30;
-    for (size_t i = 0; i < pts.size(); ++i) {
+    size_t best = 0, near_best = 0;
+    double best_d2 = 1e30, near_d2 = 1e30, near_behind = 0, best_behind = 0, behind = 0;
+    for (size_t i = pts.size(); i-- > 0;) { // newest to oldest, accumulating the distance behind
+      if (i + 1 < pts.size()) {
+        const double sx = pts[i + 1].p.x - pts[i].p.x, sz = pts[i + 1].p.z - pts[i].p.z;
+        behind += std::sqrt(sx * sx + sz * sz);
+      }
       const double dx = pts[i].p.x - p.x, dz = pts[i].p.z - p.z, d2 = dx * dx + dz * dz;
-      if (d2 < best_d2) best_d2 = d2, best = i;
+      if (d2 < best_d2) best_d2 = d2, best = i, best_behind = behind;
+      if (hint >= 0 && std::abs(behind - hint) <= HINT_WINDOW && d2 < near_d2) near_d2 = d2, near_best = i, near_behind = behind;
     }
-    double behind = 0;
-    for (size_t i = best; i + 1 < pts.size(); ++i) {
-      const double dx = pts[i + 1].p.x - pts[i].p.x, dz = pts[i + 1].p.z - pts[i].p.z;
-      behind += std::sqrt(dx * dx + dz * dz);
-    }
-    *out = {behind, std::sqrt(best_d2), pts[best].heading};
+    if (near_d2 <= 12.0 * 12.0) best = near_best, best_d2 = near_d2, best_behind = near_behind;
+    *out = {best_behind, std::sqrt(best_d2), pts[best].heading};
     return true;
   }
 };
@@ -348,11 +376,12 @@ struct Place {
   bool Good(double min_behind) const { return behind >= min_behind && lateral <= 1.8 && facing >= 0.7; }
 };
 
-inline Place Locate(const Trail& trail, const Vec& truck, double truck_heading, const Vec& car, const Vec& car_forward) {
+// `hint` = how far behind the car was last time (-1 if unknown), see Trail::Project.
+inline Place Locate(const Trail& trail, const Vec& truck, double truck_heading, const Vec& car, const Vec& car_forward, double hint = -1) {
   Place pl;
   Projection pr;
   // on the trail if it is near it and not at its very tip (the tip also catches cars in front of us)
-  if (trail.Project(car, &pr) && pr.lateral <= 12.0 && pr.behind >= 2.0) {
+  if (trail.Project(car, &pr, hint) && pr.lateral <= 12.0 && pr.behind >= 2.0) {
     const Vec f = Forward(pr.heading);
     pl = {pr.behind, pr.lateral, car_forward.x * f.x + car_forward.z * f.z, true};
   } else {
@@ -376,10 +405,10 @@ constexpr float HOLD_LIMIT = 0.001f; // "stand still"; 0 or negative would mean 
 // One frame of escorting. Fills `place` (where the car is) and `want` (the speed asked of it).
 // False if the car is gone from traffic.
 inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, double truck_speed, double gap_target, double dt,
-                  Place* place, float* want) {
+                  double hint, Place* place, float* want) {
   if (!StillThere(c)) return false;
   __try {
-    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr));
+    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr), hint);
     *want = WantSpeed(truck_speed, place->behind, gap_target);
     uint64_t* flags = reinterpret_cast<uint64_t*>(c.ptr + 0x4b8);
     *flags &= ~(FLAG_DEBUG_PAUSE | FLAG_ALLOW_OVERTAKE); // spawned paused; and an escort does not overtake us
@@ -403,10 +432,10 @@ inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double tru
 }
 
 // Where a car that was just spawned ended up (to accept or reject it). False if it is gone.
-inline bool LocateCar(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, Place* place) {
+inline bool LocateCar(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, double hint, Place* place) {
   if (!StillThere(c)) return false;
   __try {
-    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr));
+    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr), hint);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;

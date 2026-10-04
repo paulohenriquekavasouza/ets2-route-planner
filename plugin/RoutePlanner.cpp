@@ -57,6 +57,7 @@ struct EscortSlot {
   int wait = 0;           // frames until the next spawn attempt / lookup
   int attempt = 0;        // spawns tried for the current car: each one a little farther back
   int astray = 0;         // frames in a row the car has been off our path or in front of us
+  double hint = -1;       // m behind us it was last seen on the trail (keeps it on the right stretch after a U-turn)
   escort::Vec spawn_at;
   escort::Place place;    // where the car is relative to our trail
   float want = 0;         // m/s asked of it
@@ -582,7 +583,15 @@ void UpdateEscort() {
 
   // Junctions: force the curve the truck is on, so the cars behind take the same exit; release it once
   // the last escort car must be through (its distance behind us plus a margin).
-  if (const escort::Curve here = escort::CurveAt(truck); here.item) {
+  int why = 0, type = 0;
+  const escort::Curve here = escort::CurveAt(truck, &why, &type);
+  static int last_why = -1, last_type = -1;
+  if (why != last_why || type != last_type) { // diagnostics: what is under the truck, each time it changes
+    std::snprintf(line, sizeof line, "escolta: sob o caminhão: etapa %d, tipo de faixa %#x", why, type);
+    Log(line);
+    last_why = why, last_type = type;
+  }
+  if (here.item) {
     const bool known = std::any_of(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
     if (!known && g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
       g_escort_forced.push_back({here, td.odometer});
@@ -596,10 +605,11 @@ void UpdateEscort() {
 
   for (auto& slot : g_escort_slots) {
     if (slot.car.ptr) {
-      if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, &slot.place, &slot.want)) {
+      if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, slot.hint, &slot.place, &slot.want)) {
         DropCar(slot, "o carro sumiu do tráfego; outro em instantes", 60);
         continue;
       }
+      if (slot.place.on_trail) slot.hint = slot.place.behind;
       // off our path (it took another road), in front of us, or hopelessly far: after 2.5 s like that it is replaced
       const bool astray = !slot.place.on_trail && (slot.place.lateral > 12.0 || slot.place.behind < 0);
       slot.astray = astray || slot.place.behind > 350.0 ? slot.astray + 1 : 0;
@@ -616,7 +626,7 @@ void UpdateEscort() {
       slot.requested = false;
       slot.car = escort::Find(slot.model.c_str(), slot.spawn_at, 150.0);
       escort::Place born;
-      if (!slot.car.ptr || !escort::LocateCar(slot.car, g_escort_trail, truck, heading, &born)) {
+      if (!slot.car.ptr || !escort::LocateCar(slot.car, g_escort_trail, truck, heading, slot.hint, &born)) {
         slot.car = {};
         slot.note = "o carro não apareceu no tráfego";
         slot.wait = 120;
@@ -635,6 +645,7 @@ void UpdateEscort() {
       std::snprintf(line, sizeof line, "escolta (%s): carro aceito, %.0f m atrás, %.1f m de lado", slot.label, born.behind, born.lateral);
       Log(line);
       slot.attempt = 0;
+      slot.hint = born.on_trail ? born.behind : -1;
       slot.note = "no lugar";
       continue;
     }
@@ -646,6 +657,7 @@ void UpdateEscort() {
       born = {{truck.x - f.x * behind, truck.y, truck.z - f.z * behind}, heading};
     }
     slot.spawn_at = born.p;
+    slot.hint = behind; // it is asked for on that stretch of the trail
     const bool ok = escort::Spawn(slot.model.c_str(), slot.spawn_at, born.heading);
     std::snprintf(line, sizeof line, "escolta (%s): spawn %s a %.0f m atrás [%.1f; %.1f; %.1f]: %s", slot.label, slot.model.c_str(), behind,
                   slot.spawn_at.x, slot.spawn_at.y, slot.spawn_at.z, ok ? "ok" : "falhou (motivo no game.log.txt)");

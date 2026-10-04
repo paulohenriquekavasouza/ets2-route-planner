@@ -41,6 +41,16 @@ int main() {
   assert(!escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south).Good(escort::MIN_BEHIND)); // oncoming
   const escort::Place front = escort::Locate(trail, truck, 0.25, {-25, 0, -40}, escort::Forward(0.25));
   assert(!front.on_trail && front.behind < -10 && !front.Good(escort::MIN_BEHIND)); // 15 m ahead of the truck
+  // U-turn: 40 m north, across 4 m, 40 m back south. A car on the first leg is nearer to the return leg's
+  // points in a straight line only where they overlap; with the hint it stays on the stretch it was on.
+  escort::Trail uturn;
+  for (int i = 0; i <= 40; ++i) uturn.Add({{0, 0, -double(i)}, 0});
+  for (int i = 1; i <= 4; ++i) uturn.Add({{double(i), 0, -40}, 0.75});
+  for (int i = 39; i >= 0; --i) uturn.Add({{4, 0, -double(i)}, 0.5});
+  escort::Projection up;
+  assert(uturn.Project({2.5, 0, -10}, &up) && std::abs(up.behind - 10) < 1e-9);             // nearest: the return leg
+  assert(uturn.Project({2.5, 0, -10}, &up, 70) && std::abs(up.behind - 74) < 1e-9);         // it was ~70 m behind: first leg
+  assert(uturn.Project({2.5, 0, -10}, &up, 300) && std::abs(up.behind - 10) < 1e-9);        // useless hint: nearest again
   // speed: ours at the right distance, faster when far, slower when close, stopped behind a stopped truck, never negative
   assert(escort::WantSpeed(20, 30, 30) == 20.0f && escort::WantSpeed(20, 200, 30) == 32.0f && escort::WantSpeed(20, 10, 30) == 13.0f);
   assert(escort::WantSpeed(-0.0, 31, 30) == 0.0f && escort::WantSpeed(0, 80, 30) == 12.0f && escort::WantSpeed(-3, 0, 30) == 0.0f);
