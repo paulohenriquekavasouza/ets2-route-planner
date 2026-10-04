@@ -698,8 +698,8 @@ void DrawEscort(SPF_UI_API* ui, void*) {
     if (!i.valid) continue;
     std::snprintf(line, sizeof line, "%s  (id %u)", i.model, i.id);
     ui->UI_Text(line);
-    std::snprintf(line, sizeof line, "Distância: %.0f m atrás (alvo %.0f m)   De lado: %.1f m   %s", slot.place.behind, slot.gap, slot.place.lateral,
-                  slot.place.on_trail ? "no seu rastro" : "fora do rastro");
+    std::snprintf(line, sizeof line, "Distância: %.0f m atrás (alvo %.0f m)   De lado: %.1f m (%s)   %s", slot.place.behind, slot.gap, slot.place.lateral,
+                  slot.place.side > 0 ? "sua faixa à direita dele" : "sua faixa à esquerda dele", slot.place.on_trail ? "no seu rastro" : "fora do rastro");
     ui->UI_Text(line);
     std::snprintf(line, sizeof line, "Velocidade: %.0f km/h   Pedida: %.0f km/h   Alvo da IA: %.0f km/h", i.speed * 3.6, slot.want * 3.6, i.target * 3.6);
     ui->UI_Text(line);

@@ -39,6 +39,9 @@ int main() {
   assert(escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, north).Good(escort::MIN_BEHIND));
   assert(!escort::Locate(trail, truck, 0.25, {3.0, 0, -20}, north).Good(escort::MIN_BEHIND)); // 3 m aside = next lane
   assert(!escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south).Good(escort::MIN_BEHIND)); // oncoming
+  // which side: a northbound car 3 m east of our path has the path on its left (negative), 3 m west on its right
+  assert(std::abs(escort::Locate(trail, truck, 0.25, {3.0, 0, -20}, north).side + 3.0) < 1e-9);
+  assert(std::abs(escort::Locate(trail, truck, 0.25, {-3.0, 0, -20}, north).side - 3.0) < 1e-9);
   const escort::Place front = escort::Locate(trail, truck, 0.25, {-25, 0, -40}, escort::Forward(0.25));
   assert(!front.on_trail && front.behind < -10 && !front.Good(escort::MIN_BEHIND)); // 15 m ahead of the truck
   // U-turn: 40 m north, across 4 m, 40 m back south. A car on the first leg is nearer to the return leg's

@@ -519,3 +519,17 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   nada foi forçado (hipóteses: tipo diferente de 0x500000 também nas ruas, raio/altura da busca, índice virtual).
 - Outras coisas vistas no log: muitos spawns seguidos na contramão ("sentido -1.0") em pista dupla — rejeitados
   certo, mas ruidoso; um carro "6 m atrás" ao pedir 50 m (mesma ambiguidade do rastro).
+
+## v2.6.4 (branch `escolta`, 2026-10-04) — curva forçada de verdade; puxar o carro para a nossa faixa
+- Diagnóstico da v2.6.3 no jogo: na rua "etapa 5, tipo 0x500000"; no cruzamento e na rotatória
+  "etapa 7, tipo 0x600000" → a busca `CurveAt` funciona (0x600000 = curva de prefab).
+- **Por que nada era "forçado" no log:** `ForceCurve` chamava 0x94d090 (ok) e depois 0x9452a0(objeto), que lê o
+  objeto do editor de mapas ([exe+0x36ae738], nulo no jogo) → exceção pega pelo SEH → devolvia false → o plugin
+  não registrava a curva e repetia a cada quadro. Efeito real: as curvas FORAM forçadas (o carro ficou "no lugar"
+  nas duas travessias) e nunca liberadas (ficam até reiniciar o jogo). A lista global de curvas forçadas existe
+  no jogo (objeto em rva 0x2d895e0 com vtable, contagem 8). Corrigido: 0x9452a0 removida; bits 6/7 bastam.
+- **Faixa:** sugestão do usuário (o carro ir para a pista em que estou). `Place::side` = quanto o nosso rastro está
+  à direita (+) ou à esquerda (−) do carro (vetor direita = (−fz, fx)); `Steer` leva o deslocamento lateral da
+  IA (+0x460; positivo = direita, o "encostar" do ets2-police) para `atual + side` (±7 m), a 1,2 m/s, quando o
+  carro está no rastro, no mesmo sentido e entre 0,6 e 8 m de lado. A IA continua "achando" que está na faixa dela.
+- NÃO testado no jogo. Reiniciar o jogo antes (curvas da sessão anterior ficaram forçadas).

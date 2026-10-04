@@ -27,14 +27,15 @@ constexpr uint64_t FLAG_REMOVE = 1ull << 24;
 // Junctions: the traffic editor's "Force navigation" (0xcd1b00). Position -> map item (0x6c6510) ->
 // its traffic object (0x6d60f0) -> nearest lane/curve (virtual +0x80). 0x94d090(curve, on) sets bit 6
 // of curve+0x74 ("forced") and bit 7 on its sibling curves (same entry, other exits), so every AI car
-// that reaches that entry takes the forced curve; 0x9452a0(traffic object) refreshes it. Plain road
-// lanes report type 0x500000 and cannot be forced.
-constexpr uintptr_t MAP_ITEM_AT = 0x6c6510, TRAFFIC_OBJECT = 0x6d60f0, FORCE_CURVE = 0x94d090, REFRESH_OBJECT = 0x9452a0;
-constexpr unsigned char kJunctionSigs[4][10] = {
+// that reaches that entry takes the forced curve. Plain road lanes report type 0x500000 and cannot
+// be forced; junction curves report 0x600000. The editor then calls 0x9452a0(traffic object) to
+// rebuild it, which reads the map editor's own object ([exe+0x36ae738], null in the game) and
+// faults: never call it. The flags alone are what the AI obeys (confirmed in game, MODLOG v2.6.4).
+constexpr uintptr_t MAP_ITEM_AT = 0x6c6510, TRAFFIC_OBJECT = 0x6d60f0, FORCE_CURVE = 0x94d090;
+constexpr unsigned char kJunctionSigs[3][10] = {
     {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xc8, 0x00, 0x00, 0x00},
     {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10},
     {0x48, 0x89, 0x5c, 0x24, 0x18, 0x48, 0x89, 0x7c, 0x24, 0x20},
-    {0x48, 0x89, 0x4c, 0x24, 0x08, 0x55, 0x41, 0x54, 0x41, 0x55},
 };
 constexpr int LANE_ROAD = 0x500000;
 constexpr uint64_t AI_ACCESS = 0xffffffffffull;
@@ -54,8 +55,8 @@ struct Car {
 };
 
 inline bool Supported() {
-  const uintptr_t junction[4] = {MAP_ITEM_AT, TRAFFIC_OBJECT, FORCE_CURVE, REFRESH_OBJECT};
-  for (int i = 0; i < 4; ++i)
+  const uintptr_t junction[3] = {MAP_ITEM_AT, TRAFFIC_OBJECT, FORCE_CURVE};
+  for (int i = 0; i < 3; ++i)
     if (std::memcmp(game::At<const void*>(junction[i]), kJunctionSigs[i], 10) != 0) return false;
   return std::memcmp(game::At<const void*>(SPAWN), kSpawnSig, sizeof kSpawnSig) == 0 &&
          std::memcmp(game::At<const void*>(DETACH), kDetachSig, sizeof kDetachSig) == 0;
@@ -268,7 +269,6 @@ inline Curve CurveAt(const Vec& p, int* why = nullptr, int* type = nullptr) {
 inline bool ForceCurve(const Curve& c, bool on) {
   __try {
     game::At<void (*)(void*, bool)>(FORCE_CURVE)(c.item, on);
-    game::At<void (*)(void*)>(REFRESH_OBJECT)(c.owner);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
@@ -295,6 +295,7 @@ struct Projection {
   double behind = 0;  // m along the trail from the car's nearest trail point to the trail's newest point
   double lateral = 0; // m between the car and that nearest point
   double heading = 0; // the truck's heading when it passed there
+  Vec at;             // that nearest point
 };
 
 struct Trail {
@@ -351,7 +352,7 @@ struct Trail {
       if (hint >= 0 && std::abs(behind - hint) <= HINT_WINDOW && d2 < near_d2) near_d2 = d2, near_best = i, near_behind = behind;
     }
     if (near_d2 <= 12.0 * 12.0) best = near_best, best_d2 = near_d2, best_behind = near_behind;
-    *out = {best_behind, std::sqrt(best_d2), pts[best].heading};
+    *out = {best_behind, std::sqrt(best_d2), pts[best].heading, pts[best].p};
     return true;
   }
 };
@@ -372,6 +373,7 @@ struct Place {
   double lateral = 0;  // m off our path
   double facing = 0;   // 1 = same direction as us there, -1 = oncoming
   bool on_trail = false;
+  double side = 0;     // on the trail: m our path is to the car's right (negative = to its left)
   // lanes are 3.5-4.5 m apart and the trail runs down the middle of ours: 1.8 m still means "our lane"
   bool Good(double min_behind) const { return behind >= min_behind && lateral <= 1.8 && facing >= 0.7; }
 };
@@ -383,7 +385,9 @@ inline Place Locate(const Trail& trail, const Vec& truck, double truck_heading, 
   // on the trail if it is near it and not at its very tip (the tip also catches cars in front of us)
   if (trail.Project(car, &pr, hint) && pr.lateral <= 12.0 && pr.behind >= 2.0) {
     const Vec f = Forward(pr.heading);
-    pl = {pr.behind, pr.lateral, car_forward.x * f.x + car_forward.z * f.z, true};
+    // the car's right-hand vector is (-forward.z, forward.x): for a car heading north (-Z) that is east (+X)
+    const double side = (pr.at.x - car.x) * -car_forward.z + (pr.at.z - car.z) * car_forward.x;
+    pl = {pr.behind, pr.lateral, car_forward.x * f.x + car_forward.z * f.z, true, side};
   } else {
     const Vec f = Forward(truck_heading);
     const double dx = car.x - truck.x, dz = car.z - truck.z;
@@ -424,6 +428,17 @@ inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double tru
         *reinterpret_cast<float*>(phys + 0x70) = next;
         *reinterpret_cast<float*>(phys + 0xe8) = next;
       }
+    }
+    // Our lane: on a road with several lanes the AI may sit in the one next to ours. Its lateral
+    // displacement (+0x460, metres, positive = to its right; the ets2-police "pull over") moves it onto
+    // our path without changing what the AI thinks its lane is. Only between 0.6 and 8 m off, facing our way.
+    float* displace = reinterpret_cast<float*>(c.ptr + 0x460);
+    if (std::isfinite(*displace) && std::abs(*displace) < 12.0f) {
+      float goal = *displace;
+      if (place->on_trail && place->facing > 0.7 && std::abs(place->side) > 0.6 && std::abs(place->side) < 8.0)
+        goal = std::clamp(*displace + static_cast<float>(place->side), -7.0f, 7.0f);
+      const float step = static_cast<float>(1.2 * dt); // m/s sideways: a lane change, not a jump
+      *displace = goal > *displace ? std::min(goal, *displace + step) : std::max(goal, *displace - step);
     }
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
