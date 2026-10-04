@@ -45,6 +45,7 @@ std::vector<RouteOption> g_options;
 std::string g_options_for; // "src|dst" the options were computed for
 bool g_teleport = true;       // drive-free: put the truck at the source company after starting
 bool g_release_brake = true;  // and release the parking brake the teleport engages
+bool g_refuel = true;         // fill the tank when the job starts
 bool g_morning = true;        // 07:00 and clear weather before the job is created (its deadline counts from then)
 int g_start_in = -1;          // frames until the job is created after the console commands (-1 = none)
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
@@ -253,6 +254,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
   ui->UI_Checkbox("Soltar o freio de mão após teleportar", &g_release_brake);
   ui->UI_Checkbox("Antes de iniciar: 7h da manhã e tempo limpo", &g_morning);
+  ui->UI_Checkbox("Abastecer o caminhão ao iniciar", &g_refuel);
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -563,6 +565,10 @@ void RunPending() {
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
+    if (ok && g_refuel) {
+      const float before = game::Refuel();
+      Log(before < 0 ? std::string("abastecer: caminhão não reconhecido, nada feito") : "abastecido: tinha " + std::to_string(static_cast<int>(before)) + " L, tanque cheio");
+    }
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
   } else if (what == Pending::Longest) {

@@ -312,6 +312,32 @@ inline bool ReleaseParkingBrake() {
   }
 }
 
+// Fuel. The telemetry channel truck.fuel.amount (getter 0x64b630) is
+//   [veh+0x190] (tank capacity, litres) * ([veh+0x1b8] (level, 0..1) + [truck+0x1158] (pending change)),
+// with truck = [actor+0x18] (vtable rva 0x22f0260) and veh = [truck+0x1f8]. Filling the tank = level 1,
+// pending 0. Returns the litres before, or a negative number when the truck was not found as expected.
+constexpr uintptr_t TRUCK_VTBL = 0x22f0260;
+inline float Refuel() {
+  __try {
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
+    uint8_t* const truck = Alive(actor) ? Ptr(actor, 0x18) : nullptr;
+    if (!truck || *reinterpret_cast<uintptr_t*>(truck) != Base() + TRUCK_VTBL) return -1.0f;
+    uint8_t* const veh = Ptr(truck, 0x1f8);
+    if (!veh) return -1.0f;
+    const float capacity = *reinterpret_cast<const float*>(veh + 0x190);
+    float* const level = reinterpret_cast<float*>(veh + 0x1b8);
+    float* const pending = reinterpret_cast<float*>(truck + 0x1158);
+    if (!(capacity > 20.0f && capacity < 5000.0f) || !(*level >= -0.01f && *level <= 1.01f)) return -1.0f; // not a fuel tank: hands off
+    const float before = capacity * (*level + *pending);
+    *level = 1.0f;
+    *pending = 0.0f;
+    return before;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1.0f;
+  }
+}
+
 inline bool CancelJob() {
   __try {
     uint8_t* const ctrl = *At<uint8_t**>(CTRL);
