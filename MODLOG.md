@@ -316,3 +316,10 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - v2.4 refeita (2026-10-04) a pedido: em "Planejar", o botão "Salvar esta rota como favorita" fica sob a lista de
   cargas (só aparece com origem e destino escolhidos) e só habilita com a carga selecionada; mostra o que falta.
   Tag `v2.4` movida para este commit e backup `v2.4` regravado. Não testado no jogo antes da tag.
+
+## Medição pelo GPS movida para a branch `gps-distancia` (2026-10-04)
+- Pedido do usuário: esquecer a v2.5 (distância medida pelo GPS do jogo) e seguir com a v2.4. `master` = tag
+  `v2.4` (DLL e routes.tsv do backup v2.4 reinstalados, hashes conferidos; favorites.tsv preservado).
+- A branch `gps-distancia` (commit ecbb08d) guarda o código e as notas: `SetGpsToCompany` (0x7b47b0 + 0x4fad00,
+  estado [game+0x42f0]), teleporte para o pátio por tokens da empresa e o fluxo teleporte → GPS → leitura da
+  telemetria → criação do serviço. Nunca foi testado no jogo.
