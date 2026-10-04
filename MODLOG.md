@@ -313,3 +313,6 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   "Salvar o serviço atual" (ids da telemetria: source/destination city, cargo, companies) e "Salvar a rota
   escolhida em Planejar" (`AddFavorite`). Esses dois botões NÃO foram testados no jogo antes da tag.
 - **v2.4.0**, tag `v2.4`, backup em `D:\Projetos\_backupsts2-routes2.4\` + `v2.4.zip`.
+- v2.4 refeita (2026-10-04) a pedido: em "Planejar", o botão "Salvar esta rota como favorita" fica sob a lista de
+  cargas (só aparece com origem e destino escolhidos) e só habilita com a carga selecionada; mostra o que falta.
+  Tag `v2.4` movida para este commit e backup `v2.4` regravado. Não testado no jogo antes da tag.

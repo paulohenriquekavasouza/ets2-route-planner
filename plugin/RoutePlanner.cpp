@@ -218,6 +218,8 @@ void DrawCurrentJob(SPF_UI_API* ui) {
   }
 }
 
+void DrawSaveFavorite(SPF_UI_API* ui);
+
 void DrawCargo(SPF_UI_API* ui, bool on_job) {
   ui->UI_SeparatorText("Carga");
   if (g_src.city.empty() || g_dst.city.empty()) {
@@ -265,7 +267,14 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
   if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
-  ui->UI_BeginDisabled(g_selected < 0);
+  DrawSaveFavorite(ui);
+}
+
+// Shown under the cargo list (so origin and destination are set); enabled once a cargo is selected.
+void DrawSaveFavorite(SPF_UI_API* ui) {
+  const char* missing = g_selected < 0 || g_selected >= static_cast<int>(g_options.size()) ? "Escolha a carga para poder salvar." : nullptr;
+  ui->UI_SeparatorText("Favoritas");
+  ui->UI_BeginDisabled(missing != nullptr);
   if (g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size())) {
     if (ui->UI_Button("Salvar alterações na favorita", -1, 0)) {
       g_favorites[g_editing] = SelectedRoute();
@@ -275,10 +284,11 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
       g_editing = -1;
       g_view = View::Favorites;
     }
-  } else if (ui->UI_Button("Adicionar esta rota às favoritas", -1, 0)) {
+  } else if (ui->UI_Button("Salvar esta rota como favorita", -1, 0)) {
     AddFavorite(SelectedRoute());
   }
   ui->UI_EndDisabled();
+  if (missing) ui->UI_TextDisabled(missing);
   if (g_editing >= 0 && ui->UI_Button("Cancelar edição", -1, 0)) {
     g_editing = -1;
     g_view = View::Favorites;
