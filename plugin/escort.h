@@ -559,6 +559,27 @@ inline int ClearLane(const Trail& trail, const Vec& truck, double truck_heading,
   return removed;
 }
 
+// Brings the car to a stop where it is and keeps it there (call every frame). False if it is gone.
+inline bool Hold(const Car& c, double dt) {
+  if (!StillThere(c)) return false;
+  __try {
+    *reinterpret_cast<uint64_t*>(c.ptr + 0x4b8) &= ~FLAG_DEBUG_PAUSE;
+    *reinterpret_cast<float*>(c.ptr + 0x430) = HOLD_LIMIT;
+    uint8_t* const phys = game::Ptr(c.ptr, 0x238);
+    if (phys && (phys[0x1c] & 1)) {
+      const float cur = *reinterpret_cast<const float*>(phys + 0x70);
+      if (cur > 0.1f) {
+        const float next = std::max(0.0f, cur - static_cast<float>(6.0 * dt));
+        *reinterpret_cast<float*>(phys + 0x70) = next;
+        *reinterpret_cast<float*>(phys + 0xe8) = next;
+      }
+    }
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // Where a car that was just spawned ended up (to accept or reject it). False if it is gone.
 inline bool LocateCar(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, double hint, Place* place) {
   if (!StillThere(c)) return false;

@@ -55,6 +55,7 @@ struct EscortSlot {
   double gap;         // m behind the truck, along its trail
   std::string model;  // traffic vehicle name, resolved when the escort is called
   escort::Car car;
+  escort::Car parked;     // the previous car, stopped where it could no longer follow; deleted when a new one is accepted
   bool requested = false; // spawn asked; look the car up when `wait` runs out
   int wait = 0;           // frames until the next spawn attempt / lookup
   int attempt = 0;        // spawns tried for the current car: each one a little farther back
@@ -507,7 +508,7 @@ int RemoveEscortCars() {
   for (const auto& c : g_escort_all) n += escort::Remove(c);
   g_escort_all.clear();
   for (auto& slot : g_escort_slots) {
-    slot.car = {};
+    slot.car = slot.parked = {};
     slot.requested = false;
     slot.wait = slot.attempt = slot.streak = slot.astray = 0;
     slot.note = "sem carro";
@@ -658,6 +659,10 @@ void UpdateEscort() {
   ReleaseCurves(g_escort_travel, farthest + 60.0);
 
   for (auto& slot : g_escort_slots) {
+    if (slot.parked.ptr) { // waiting where our path ended for it, lights on, until another car can take over
+      if (!escort::Hold(slot.parked, dt)) slot.parked = {};
+      else if (g_escort_lights && g_escort_lights_failed < 5) escort::LightsOn(slot.parked, escort::LIGHTS_EMERGENCY);
+    }
     if (slot.car.ptr) {
       if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, slot.hint, &slot.place, &slot.want)) {
         DropCar(slot, "o carro sumiu do tráfego; outro em instantes", 60);
@@ -669,9 +674,21 @@ void UpdateEscort() {
       // off our path (it took another road), in front of us, or hopelessly far: after 2.5 s like that it is replaced
       const bool astray = !slot.place.on_trail && (slot.place.lateral > 12.0 || slot.place.behind < 0);
       slot.astray = astray || slot.place.behind > 350.0 ? slot.astray + 1 : 0;
+      if (astray) escort::Hold(slot.car, dt); // it cannot come the way we went: it stops as far as it got
       if (slot.astray > 150) {
-        std::snprintf(line, sizeof line, "saiu do nosso caminho (%.0f m atrás, %.0f m de lado); outro em instantes", slot.place.behind, slot.place.lateral);
-        DropCar(slot, line, 30);
+        // It stays there, stopped, while another car is tried behind us. Where the game refuses the spawn
+        // ("access not allowed": a yard, a road with no AI lanes) this is the escort, waiting at the entrance.
+        if (slot.parked.ptr) {
+          escort::Remove(slot.parked);
+          std::erase_if(g_escort_all, [&](const escort::Car& c) { return c.ptr == slot.parked.ptr; });
+        }
+        slot.parked = slot.car;
+        slot.car = {};
+        slot.astray = 0;
+        slot.wait = 30;
+        std::snprintf(line, sizeof line, "não pôde seguir (%.0f m atrás, %.0f m de lado): parada ali; outra assim que o jogo permitir", slot.place.behind, slot.place.lateral);
+        slot.note = line;
+        Log(std::string("escolta (") + slot.label + "): " + line);
         continue;
       }
       slot.note = slot.place.behind > slot.gap + 15 ? "alcançando" : slot.want == 0 ? "parado atrás de você" : "no lugar";
@@ -699,6 +716,11 @@ void UpdateEscort() {
       }
       std::snprintf(line, sizeof line, "escolta (%s): carro aceito, %.0f m atrás, %.1f m de lado", slot.label, born.behind, born.lateral);
       Log(line);
+      if (slot.parked.ptr) { // the new car took over
+        escort::Remove(slot.parked);
+        std::erase_if(g_escort_all, [&](const escort::Car& c) { return c.ptr == slot.parked.ptr; });
+        slot.parked = {};
+      }
       slot.attempt = slot.streak = 0;
       slot.hint = born.on_trail ? born.behind : -1;
       slot.note = "no lugar";
@@ -727,7 +749,7 @@ void UpdateEscort() {
     std::snprintf(line, sizeof line, "escolta (%s): spawn %s a %.0f m atrás [%.1f; %.1f; %.1f]: %s", slot.label, slot.model.c_str(), behind,
                   slot.spawn_at.x, slot.spawn_at.y, slot.spawn_at.z, ok ? "ok" : "falhou (motivo no game.log.txt)");
     Log(line);
-    slot.note = ok ? "carro pedido ao jogo" : "o jogo recusou o spawn aqui; nova tentativa em instantes";
+    slot.note = ok ? "carro pedido ao jogo" : slot.parked.ptr ? "sem acesso aqui: viatura parada onde conseguiu chegar" : "o jogo recusou o spawn aqui; nova tentativa em instantes";
     slot.requested = ok;
     slot.wait = 5;
     if (!ok) EscortTryFailed(slot, 180);

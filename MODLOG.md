@@ -643,3 +643,10 @@ Não testado em jogo ainda (jogo fechado na hora).
   (em cruzamentos comuns elas aparecem por instantes como "a mais próxima"). Forçar não faz a IA escolhê-las (o pontuador
   0x941310 rejeita por acesso antes de olhar o bit de forçada), mas marca as irmãs (bit 7), e é o `Replan` que põe a curva no plano.
 - Incerto: o que a IA faz ao fim de uma curva sem acesso (se a rua seguinte não tiver faixa de IA, a viatura pode parar/sumir → o plugin troca de carro). Não testado em jogo.
+
+## escolta: sem acesso para seguir → a viatura para onde conseguiu chegar (2026-10-04, núcleo)
+- Pedido: quando o spawn dá "access not allowed" (pátio, rua sem faixa de IA), a viatura deve parar no ponto máximo aonde consegue ir.
+- Antes: saiu do rastro → excluída após 2,5 s → spawns recusados (10 tentativas + espera) → ficava sem escolta.
+- Agora: assim que sai do nosso caminho ela é freada (`escort::Hold`: limite 0,001 + desaceleração 6 m/s²); após 2,5 s
+  vira `slot.parked` (parada ali, giroflex ligado) e o plugin tenta outra atrás do caminhão como antes. Quando uma
+  nova é aceita, a parada é excluída; dispensar/terminar o serviço exclui as duas. Não testado em jogo.
