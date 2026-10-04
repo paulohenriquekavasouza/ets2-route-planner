@@ -279,3 +279,15 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 # ===== v2.3 (2026-10-02) =====
 - Usuário confirmou ("funcionou"): 7h + tempo limpo antes de criar o serviço. **v2.3.0**, tag `v2.3`,
   backup em `D:\Projetos\_backupsts2-routes2.3\` + `v2.3.zip`.
+
+## Escolta policial movida para a branch `escolta` (2026-10-04)
+- Pedido do usuário: deixar a escolta em outra branch e voltar para a v2.3. `master` = tag `v2.3`
+  (DLL e routes.tsv do backup v2.3 reinstalados, hashes conferidos).
+- A branch `escolta` (commit c70e2c0, v2.5.1) guarda todo o trabalho e o diário dele (ler o MODLOG.md
+  de lá): comando `spawn vehicle` e a função 0x566960, modelos de polícia por país, bit 63
+  debug_pause, exclusão de veículo de IA (0xace9e0 + bit 24), painel, layout do corpo físico
+  (posição/orientação/velocidade) e a condução pelo rastro do caminhão (não testada no jogo).
+  Pendências lá: confirmar a condução pelo rastro, giroflex, país atual, e a causa do fechamento do
+  jogo ao recarregar o framework com um carro vivo (suspeita: chamada ao jogo dentro do OnUnload).
+- Restos no `spfPlugins\RoutePlanner\config\settings.json`: tecla `escort` e janela `Escolta` (o SPF
+  regrava o arquivo com o jogo aberto; sem efeito na v2.3).
