@@ -140,24 +140,29 @@ inline bool CargoExists(uint64_t token) {
 // ponytail: straight line * 1.2 underestimates mountain/ferry routes; the game's own navigation
 // (route search between the two companies) would be exact if this turns out too far off.
 constexpr double MAP_SCALE = 19.0, ROAD_FACTOR = 1.2;
-inline double FreightKm(uint64_t src_co, uint64_t src_city, uint64_t dst_co, uint64_t dst_city) {
+
+// Centre of a company's map item (world x, y, z); false if the game has no such company.
+inline bool CompanyCenter(uint64_t company_tok, uint64_t city_tok, double out[3]) {
   using FindFn = uint8_t* (*)(uint64_t* company, uint64_t* city);
-  double c[2][3] = {};
-  uint64_t keys[2][2] = {{src_co, src_city}, {dst_co, dst_city}};
   __try {
-    for (int k = 0; k < 2; ++k) {
-      const uint8_t* company = At<FindFn>(FIND_COMPANY)(&keys[k][0], &keys[k][1]);
-      const uint8_t* item = Alive(company) ? Ptr(company, 0x10) : nullptr;
-      if (!item) return -1;
-      const float* mn = reinterpret_cast<const float*>(item + 0x0c);
-      const float* mx = reinterpret_cast<const float*>(item + 0x20);
-      for (int i = 0; i < 3; ++i) c[k][i] = (mn[i] + mx[i]) / 2.0;
-    }
+    const uint8_t* company = At<FindFn>(FIND_COMPANY)(&company_tok, &city_tok);
+    const uint8_t* item = Alive(company) ? Ptr(company, 0x10) : nullptr;
+    if (!item) return false;
+    const float* mn = reinterpret_cast<const float*>(item + 0x0c);
+    const float* mx = reinterpret_cast<const float*>(item + 0x20);
+    for (int i = 0; i < 3; ++i) out[i] = (mn[i] + mx[i]) / 2.0;
+    return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return -1;
+    return false;
   }
-  const double dx = c[1][0] - c[0][0], dz = c[1][2] - c[0][2];
-  return std::sqrt(dx * dx + dz * dz) / 1000.0 * MAP_SCALE * ROAD_FACTOR;
+}
+
+inline double MetersToFreightKm(double metres) { return metres / 1000.0 * MAP_SCALE * ROAD_FACTOR; }
+
+inline double FreightKm(uint64_t src_co, uint64_t src_city, uint64_t dst_co, uint64_t dst_city) {
+  double a[3], b[3];
+  if (!CompanyCenter(src_co, src_city, a) || !CompanyCenter(dst_co, dst_city, b)) return -1;
+  return MetersToFreightKm(std::sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[2] - a[2]) * (b[2] - a[2])));
 }
 
 // `code` gets the game's result code (0 = ok; 14 = trailer spot occupied, worth retrying).

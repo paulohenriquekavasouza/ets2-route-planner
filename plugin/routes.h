@@ -2,6 +2,7 @@
 // needs: which cargo can go from a company in city A to a company in city B.
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -96,6 +97,72 @@ inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::stri
 inline int CargoMass(const RouteData& d, const std::string& cargo) {
   const auto it = d.cargo_mass.find(cargo);
   return it == d.cargo_mass.end() ? 0 : it->second;
+}
+
+// ---- favourite routes: favorites.tsv next to the DLL, one route per line ----
+struct Favorite {
+  std::string src_city, dst_city, cargo, src_company, dst_company;
+  bool operator==(const Favorite&) const = default;
+};
+
+inline std::vector<Favorite> LoadFavorites(const std::string& path) {
+  std::vector<Favorite> out;
+  std::ifstream in(path);
+  for (std::string line; std::getline(in, line);) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const auto f = SplitTabs(line);
+    if (f.size() >= 5) out.push_back({f[0], f[1], f[2], f[3], f[4]});
+  }
+  return out;
+}
+
+inline bool SaveFavorites(const std::string& path, const std::vector<Favorite>& favs) {
+  std::ofstream out(path, std::ios::trunc);
+  for (const auto& f : favs) out << f.src_city << '\t' << f.dst_city << '\t' << f.cargo << '\t' << f.src_company << '\t' << f.dst_company << '\n';
+  return static_cast<bool>(out);
+}
+
+// Index of the option a favourite refers to: same cargo and companies, else the same cargo, else -1.
+inline int FindOption(const std::vector<RouteOption>& options, const Favorite& f) {
+  int same_cargo = -1;
+  for (int i = 0; i < static_cast<int>(options.size()); ++i) {
+    if (options[i].cargo != f.cargo) continue;
+    if (options[i].src_company == f.src_company && options[i].dst_company == f.dst_company) return i;
+    if (same_cargo < 0) same_cargo = i;
+  }
+  return same_cargo;
+}
+
+// The two points farthest apart (x, z), as indices into `pts`; {-1, -1} with fewer than two points.
+// ponytail: O(n^2) over ~400 cities is 80k distance checks, once per click.
+struct MapPoint {
+  double x = 0, z = 0;
+  bool valid = false;
+};
+inline std::pair<int, int> FarthestPair(const std::vector<MapPoint>& pts, double* dist) {
+  std::pair<int, int> best{-1, -1};
+  double best_d2 = -1;
+  for (int i = 0; i < static_cast<int>(pts.size()); ++i)
+    for (int j = i + 1; pts[i].valid && j < static_cast<int>(pts.size()); ++j) {
+      if (!pts[j].valid) continue;
+      const double dx = pts[i].x - pts[j].x, dz = pts[i].z - pts[j].z, d2 = dx * dx + dz * dz;
+      if (d2 > best_d2) best_d2 = d2, best = {i, j};
+    }
+  if (dist) *dist = best_d2 < 0 ? 0 : std::sqrt(best_d2);
+  return best;
+}
+
+// Index of the valid point closest to (x, z), or -1; `dist` gets the distance.
+inline int NearestPoint(const std::vector<MapPoint>& pts, double x, double z, double* dist) {
+  int best = -1;
+  double best_d2 = 0;
+  for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+    if (!pts[i].valid) continue;
+    const double dx = pts[i].x - x, dz = pts[i].z - z, d2 = dx * dx + dz * dz;
+    if (best < 0 || d2 < best_d2) best = i, best_d2 = d2;
+  }
+  if (dist) *dist = std::sqrt(best_d2);
+  return best;
 }
 
 // SCS token (base 38, first character least significant), as the game's console commands parse it.

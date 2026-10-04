@@ -360,3 +360,86 @@ atrás, na mesma velocidade.
   carros ficam com a IA. Outra possibilidade em aberto: o corpo físico que alterei nos testes externos.
 - **Regra:** nunca chamar funções do jogo em OnUnload. Para trocar de versão com escolta ativa:
   excluir os carros pelo painel (Home) ou cancelar o serviço antes de recarregar.
+## Escolta policial movida para a branch `escolta` (2026-10-04)
+- Pedido do usuário: deixar a escolta em outra branch e voltar para a v2.3. `master` = tag `v2.3`
+  (DLL e routes.tsv do backup v2.3 reinstalados, hashes conferidos).
+- A branch `escolta` (commit c70e2c0, v2.5.1) guarda todo o trabalho e o diário dele (ler o MODLOG.md
+  de lá): comando `spawn vehicle` e a função 0x566960, modelos de polícia por país, bit 63
+  debug_pause, exclusão de veículo de IA (0xace9e0 + bit 24), painel, layout do corpo físico
+  (posição/orientação/velocidade) e a condução pelo rastro do caminhão (não testada no jogo).
+  Pendências lá: confirmar a condução pelo rastro, giroflex, país atual, e a causa do fechamento do
+  jogo ao recarregar o framework com um carro vivo (suspeita: chamada ao jogo dentro do OnUnload).
+- Restos no `spfPlugins\RoutePlanner\config\settings.json`: tecla `escort` e janela `Escolta` (o SPF
+  regrava o arquivo com o jogo aberto; sem efeito na v2.3).
+
+## v2.4.0 (2026-10-04) — favoritas e maior rota (sobre a v2.3; a escolta segue na branch `escolta`)
+- Barra no topo da janela: **Planejar**, **Favoritas (n)**, **Maior rota** (sem tecla nova).
+- Favoritas: `favorites.tsv` ao lado da DLL (cidade origem, cidade destino, carga, empresa origem,
+  empresa destino; `LoadFavorites`/`SaveFavorites` em routes.h). Tela com Iniciar / Editar / Remover.
+  "Iniciar" carrega a rota no planejador (`ApplyRoute`) e usa o mesmo `Pending::Start` do botão
+  normal (7h + tempo limpo, criação, teleporte, freio). "Editar" abre o planejador com a rota
+  carregada e o botão vira "Salvar alterações na favorita". No planejador: "Adicionar esta rota às
+  favoritas" (rota = origem, destino e a carga selecionada; não duplica).
+- `FilterUnknownCargo` agora preserva a carga selecionada ao remover cargas que o jogo não conhece.
+- Maior rota: `game::CompanyCenter` (centro do item de mapa da 1ª empresa conhecida de cada cidade,
+  via 0x7d0df0) para as 384 cidades, `FarthestPair` (O(n²)), preenche países e cidades, liga
+  "Qualquer carga" e mostra a distância estimada (mesma conta do pagamento: linha reta × 19 × 1,2).
+  Roda no OnUpdate porque consulta o jogo.
+- Testes novos em routes_test: ida e volta das favoritas, `FindOption`, `FarthestPair`.
+- NÃO testado no jogo.
+
+# ===== v2.4 (2026-10-04) =====
+- Usuário confirmou favoritas e maior rota ("funcionou"). Pedido extra antes de salvar: na aba Favoritas,
+  "Salvar o serviço atual" (ids da telemetria: source/destination city, cargo, companies) e "Salvar a rota
+  escolhida em Planejar" (`AddFavorite`). Esses dois botões NÃO foram testados no jogo antes da tag.
+- **v2.4.0**, tag `v2.4`, backup em `D:\Projetos\_backupsts2-routes2.4\` + `v2.4.zip`.
+- v2.4 refeita (2026-10-04) a pedido: em "Planejar", o botão "Salvar esta rota como favorita" fica sob a lista de
+  cargas (só aparece com origem e destino escolhidos) e só habilita com a carga selecionada; mostra o que falta.
+  Tag `v2.4` movida para este commit e backup `v2.4` regravado. Não testado no jogo antes da tag.
+
+## Medição pelo GPS movida para a branch `gps-distancia` (2026-10-04)
+- Pedido do usuário: esquecer a v2.5 (distância medida pelo GPS do jogo) e seguir com a v2.4. `master` = tag
+  `v2.4` (DLL e routes.tsv do backup v2.4 reinstalados, hashes conferidos; favorites.tsv preservado).
+- A branch `gps-distancia` (commit ecbb08d) guarda o código e as notas: `SetGpsToCompany` (0x7b47b0 + 0x4fad00,
+  estado [game+0x42f0]), teleporte para o pátio por tokens da empresa e o fluxo teleporte → GPS → leitura da
+  telemetria → criação do serviço. Nunca foi testado no jogo.
+
+## v2.5.0 (2026-10-04) — botão "Cidade atual" (master, sobre a v2.4)
+- Em "Planejar", logo abaixo de "Origem": botão **Cidade atual** → país e cidade de origem = a cidade mais
+  próxima do caminhão. `CityPoints()` (extraído do "Maior rota": centro do item de mapa da 1ª empresa
+  conhecida de cada cidade, via 0x7d0df0) + `NearestPoint` (routes.h, testado) com a posição da telemetria.
+  Roda no OnUpdate (`Pending::CurrentCity`) porque consulta o jogo. Mostra a cidade e a distância no mapa.
+- Limite conhecido: "cidade" = onde ficam as empresas dela; numa estrada longe de tudo, vale a mais próxima.
+- NÃO testado no jogo.
+
+# ===== v2.5 (2026-10-04) =====
+- Usuário confirmou ("funcionou"): botão "Cidade atual". **v2.5.0**, tag `v2.5`, backup em
+  `D:\Projetos\_backupsts2-routes2.5\` + `v2.5.zip`.
+
+## Estudo (sem implementar): escolta do DLC Transporte Especial (2026-10-04)
+Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualquer carga/destino.
+- **Dados** (`dlc_oversize/def`): `oversize_data.sii` (escort_max_speed 80 km/h; escort_dangerous_objects:
+  rail_train, slow, rail_tram); `route*.sii` = 65 `route_data` (59 no arquivo base; só from_city/to_city); `oversize_offer_data*.sii`
+  = 272 ofertas (rota + carga + limites de tempo + dimensões + cutscenes). Veículos: `traffic.transport_t6.escort_N.back`
+  / `.front` (tipos `escort_back`/`escort_front`, tag `escort_all`, back com `flares_beacon_min0max28`).
+- **O caminho da escolta NÃO é calculado: é desenhado no mapa.** O jogo procura *itens de trajetória* com tags
+  da rota: "Front/Back escort trajectory", "Escort meet/leave trajectory", "Offer point", "Trailer start/end"
+  (mensagens `[oversize_offer] ... trajectory for route '%s' not found. (tag '%s')`). Só as rotas do DLC têm.
+- **Regras nos nós da trajetória** (`def/world/trajectory_rules.sii`, 35 regras): ligar/desligar "escort special"
+  (luzes), bloquear nós de IA em cruzamentos (`bl`, `back_bl`, `circ_emp_bl`) e cancelar, parar o veículo,
+  liberar a parada quando o jogador chega (`canc_fr_st`, `canc_bc_st`), seções normal/perigosa/troca de faixa,
+  piscas, "escort near", mensagens (devagar, trecho apertado, faixa errada, abrir caminho).
+- **Criação do veículo** (ferramenta de debug do tráfego, 0x553e80–0x554450): tipos via 0x54e170 (frente) /
+  0x54e1e0 (trás) no gerente [exe+0x36ae7e8]; trajetória achada por 0x551e90 perto de um item; veículo criado
+  por 0x564b20(traffic, 0, params{tipo}, caminho, ...); 0x924520(veh, 8) + 0x939500 instalam um **controlador
+  de escolta** em veh+0x4f0 (objeto 0x158 bytes, vtable rva 0x2320518; update = 0x940580, todo em chamadas
+  virtuais — a lógica de distância ao jogador NÃO foi lida); 0x920cc0(veh, trajetória, vel, índice, ...) prende
+  o veículo à trajetória; 0x76e190/0x76e1f0 registram como escolta dianteira/traseira.
+- **Estado salvo** (oversize_job_save, offsets): posição no mundo (+0x18/+0x24), uid da trajetória (+0x30/+0x38),
+  posição AO LONGO dela (+0x40/+0x44), rotação (+0x48/+0x58), velocidade (+0x68/+0x6c), tipo/estado/semente,
+  spawn_escort_active (+0x88), trajectory_orders (+0x90), estado do gerente (+0xb8), kdop atual (+0xbc),
+  última posição válida do jogador (+0xc0), bloqueios ativos (+0xd0), hash da rota (+0xf8).
+- **Conclusão:** para "qualquer carga, qualquer destino" o sistema do DLC não serve direto (sem trajetórias fora
+  das 65 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
+  o da branch `escolta` (carro conduzido pelo rastro do caminhão), usando os MODELOS de escolta do DLC e
+  procurando o que a regra `on_special` liga no veículo (pista para o giroflex).

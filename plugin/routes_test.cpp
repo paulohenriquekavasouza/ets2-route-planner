@@ -37,6 +37,16 @@ int main() {
   float q[4];
   escort::Orientation(0.25, 0, q); // 90 degrees left about +Y
   assert(std::abs(q[0] - 0.70710678f) < 1e-5 && std::abs(q[2] - 0.70710678f) < 1e-5 && q[1] == 0 && q[3] == 0);
+  // favourites survive a save/load round trip, and find their option again
+  const std::vector<Favorite> favs = {{"berlin", "bremen", "beef", "tesco", "lisette"}, {"berlin", "bremen", "apples", "tesco", "nobody"}};
+  assert(SaveFavorites("fav_test.tsv", favs) && LoadFavorites("fav_test.tsv") == favs && LoadFavorites("missing.tsv").empty());
+  assert(FindOption(o, favs[0]) == 2 && FindOption(o, favs[1]) == 0 && FindOption(o, {"", "", "gold", "", ""}) == -1);
+  double far_m = 0;
+  const auto ends = FarthestPair({{0, 0, true}, {30, 40, true}, {1000, 1000, false}, {-3, -4, true}}, &far_m);
+  assert(ends.first == 1 && ends.second == 3 && std::abs(far_m - 55.0) < 1e-9 && FarthestPair({{1, 1, true}}, nullptr).first == -1);
+  double near_m = 0;
+  assert(NearestPoint({{0, 0, true}, {30, 40, true}, {28, 39, false}}, 27, 36, &near_m) == 1 && std::abs(near_m - 5.0) < 1e-9);
+  assert(NearestPoint({{1, 1, false}}, 0, 0, nullptr) == -1);
   static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
   assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
   std::puts("routes_test ok");
