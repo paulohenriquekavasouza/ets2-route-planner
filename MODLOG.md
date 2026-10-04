@@ -389,3 +389,12 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Não verificado: de onde vem o ícone (P), acentos (o jogo usa UTF-8), se a caixa some sozinha, e a disputa com os avisos
   do próprio jogo (cada aviso dele sobrescreve a mesma string). Chamar só na thread do jogo (Update do plugin), com SEH e conferência do prólogo.
 - **Teste (após a v2.5.1, sem tag):** `game::ShowHint/HideHint`; ao iniciar um serviço, 2 s depois vai "Serviço iniciado | carga<br>origem → destino<br>Tanque cheio" para a caixa e é retirada após ~10 s (só se ainda for a nossa: compara com `adv+0xf20`). Reabastecimento da v2.5.1 confirmado em jogo.
+- **Correção do estudo da caixa de aviso (2026-10-04):** 0xa63920 é da Academia de Direção (chaves `aca_*`; exige estado 3..5 em
+  `[[owner+0x2b30]+0x210]`, que fora da academia é 0 → log "motivo 100"). O aviso normal vem de uma tabela de formatos
+  (rva 0x2d6ba30: índice 6 = parking_brake, 11 = car_delivery_ready…) e vai para a **fila de mensagens do conselheiro**:
+  `fila = [actor+0x30] + 0xd8` (entradas de 0x70 bytes: id, ativo +4, chave +8, prioridade +0xc, texto +0x18, tipo +0x40, expiração +0x60/+0x68).
+  - `0x623a80(fila, char** texto, sub (exe+0x2732198 → ""), tipo, ícone*, prioridade, a, b, u16 c, objeto, {u8 tem_chave; i32 chave}*)`;
+    tipo indexa a tabela 0x2d69370 (0xb = ícone próprio em `ícone*`). Freio de mão (0x68a5eb): tipo 6, prio 2, a 1, b 0, c 7, chave {1,0}.
+    "Carro pronto" (0x68d4d0): tipo 2, prio 2, a 0, b 2, c 0xffff, sem chave.
+  - `0x623970(fila, chave)` retira a mensagem com aquela chave (marca a expiração).
+  - Plugin (teste): `game::ShowHint(texto)` com os valores do "carro pronto" e chave própria 0x52504c; `HideHint()` após ~10 s. Não testado em jogo.

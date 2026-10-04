@@ -338,57 +338,52 @@ inline float Refuel() {
   }
 }
 
-// The route adviser's hint box (the one that says "Freio de mão acionado!"). The game fills it with
-// 0xa63920(hud, char** title, char** text): "title|text" goes to the string at adv+0xf18 and adv+0xf38 = 1,
-// hud = [[[exe+0x36ae6d8]+0x2b30]+0xb0], adv = [[hud+0x50]+0x340]. An empty title hides the box. Like the
-// game, only while driving ([[owner+0x2b30]+0x210] in 3..5) and with adv+0xf39 clear. Text takes the game's
-// markup (<br>, <color value=@@clr_sel@@>, @@keys@@), UTF-8. Call from the game thread only.
-constexpr uintptr_t HINT_SHOW = 0xa63920;
-constexpr unsigned char kHintSig[10] = {0x40, 0x53, 0x48, 0x81, 0xec, 0x40, 0x04, 0x00, 0x00, 0x48};
-// `why` (optional): 0 found, 2 no UI object, 100 + state when the game is not in a driving state, 4 no HUD,
-// 5 no panel holder, 6 no panel.
-inline uint8_t* HintPanel(uint8_t** hud_out, int* why = nullptr) {
-  int w = 0;
+// The route adviser's message box (the one that says "Freio de mão acionado!"). The adviser is
+// [actor+0x30]; its message queue (+0xd8, entries of 0x70 bytes) is fed by
+//   0x623a80(queue, char** text, void* sub (exe+0x2732198 = ""), int kind, void* icon, int priority, int a, int b,
+//            u16 c, void* object, {u8 has_key; i32 key}*)
+// and a keyed message is taken down by 0x623970(queue, key). Values copied from the game's own callers:
+// "car delivery ready" (0x68d4d0): kind 2, priority 2, a 0, b 2, c 0xffff; parking brake (0x68a5eb): kind 6
+// (its icon), priority 2, a 1, b 0, c 7, key {1, 0}. Text takes the game's markup (<br>,
+// <color value=@@clr_sel@@>, @@keys@@), UTF-8. Call from the game thread only.
+// (0xa63920, tried first, is the Driving Academy's box: it only works in that mode.)
+constexpr uintptr_t HINT_SHOW = 0x623a80, HINT_HIDE = 0x623970, HINT_SUB = 0x2732198;
+constexpr unsigned char kHintSig[2][10] = {{0x44, 0x89, 0x4c, 0x24, 0x20, 0x4c, 0x89, 0x44, 0x24, 0x18},
+                                           {0x4c, 0x6b, 0x41, 0x20, 0x70, 0x48, 0x8b, 0x41, 0x18, 0x4c}};
+constexpr int HINT_KEY = 0x52504c; // ours ("RPL"); the game's own keys are small numbers
+inline uint8_t* HintQueue() {
+  if (std::memcmp(At<const void*>(HINT_SHOW), kHintSig[0], 10) != 0 || std::memcmp(At<const void*>(HINT_HIDE), kHintSig[1], 10) != 0) return nullptr;
   uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
-  uint8_t* const ui = owner ? Ptr(owner, 0x2b30) : nullptr;
-  uint8_t* const hud = ui ? Ptr(ui, 0xb0) : nullptr;
-  uint8_t* const holder = hud ? Ptr(hud, 0x50) : nullptr;
-  uint8_t* adv = holder ? Ptr(holder, 0x340) : nullptr;
-  if (!ui) w = 2;
-  else if (ui[0x210] < 3 || ui[0x210] > 5) w = 100 + ui[0x210];
-  else if (!hud) w = 4;
-  else if (!holder) w = 5;
-  else if (!adv) w = 6;
-  if (why) *why = w;
-  if (w) adv = nullptr;
-  if (adv && hud_out) *hud_out = hud;
-  return adv;
+  uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
+  uint8_t* const adviser = Alive(actor) ? Ptr(actor, 0x30) : nullptr;
+  return adviser ? adviser + 0xd8 : nullptr;
 }
-// 0 = sent; 1 game not recognised, 7 panel busy, 9 exception, otherwise HintPanel's reason.
-inline int ShowHint(const char* title, const char* text) {
-  if (std::memcmp(At<const void*>(HINT_SHOW), kHintSig, sizeof kHintSig) != 0) return 1;
+// 0 = sent; 1 game not recognised or no adviser, 9 exception.
+inline int ShowHint(const char* text) {
+  struct Key {
+    uint8_t has;
+    int32_t key;
+  };
+  using Fn = void (*)(void*, const char**, void*, int, void*, int, int, int, uint16_t, void*, const Key*);
   __try {
-    uint8_t* hud = nullptr;
-    int why = 0;
-    uint8_t* const adv = HintPanel(&hud, &why);
-    if (!adv) return why;
-    if (adv[0xf39]) return 7;
-    At<void (*)(void*, const char**, const char**)>(HINT_SHOW)(hud, &title, &text);
+    uint8_t* const queue = HintQueue();
+    if (!queue) return 1;
+    const Key key{1, HINT_KEY};
+    At<Fn>(HINT_SHOW)(queue, &text, At<void*>(HINT_SUB), 2, At<void*>(HINT_SUB), 2, 0, 2, 0xffff, nullptr, &key);
     return 0;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return 9;
   }
 }
-// Hides the box, but only if it still shows `shown` ("title|text"): the game's own hints use the same box.
-inline bool HideHint(const char* shown) {
+inline bool HideHint() {
   __try {
-    uint8_t* const adv = HintPanel(nullptr);
-    const char* const now = adv ? *reinterpret_cast<const char* const*>(adv + 0xf20) : nullptr;
-    if (!now || std::strcmp(now, shown) != 0) return false;
+    uint8_t* const queue = HintQueue();
+    if (!queue) return false;
+    At<void (*)(void*, int)>(HINT_HIDE)(queue, HINT_KEY);
+    return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }
-  return ShowHint("", "") == 0;
 }
 
 inline bool CancelJob() {
