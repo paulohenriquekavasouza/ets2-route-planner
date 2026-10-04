@@ -335,3 +335,31 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 # ===== v2.5 (2026-10-04) =====
 - Usuário confirmou ("funcionou"): botão "Cidade atual". **v2.5.0**, tag `v2.5`, backup em
   `D:\Projetos\_backupsts2-routes2.5\` + `v2.5.zip`.
+
+## Estudo (sem implementar): escolta do DLC Transporte Especial (2026-10-04)
+Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualquer carga/destino.
+- **Dados** (`dlc_oversize/def`): `oversize_data.sii` (escort_max_speed 80 km/h; escort_dangerous_objects:
+  rail_train, slow, rail_tram); `route*.sii` = 59 `route_data` (só from_city/to_city); `oversize_offer_data*.sii`
+  = ofertas (rota + carga + limites de tempo + dimensões + cutscenes). Veículos: `traffic.transport_t6.escort_N.back`
+  / `.front` (tipos `escort_back`/`escort_front`, tag `escort_all`, back com `flares_beacon_min0max28`).
+- **O caminho da escolta NÃO é calculado: é desenhado no mapa.** O jogo procura *itens de trajetória* com tags
+  da rota: "Front/Back escort trajectory", "Escort meet/leave trajectory", "Offer point", "Trailer start/end"
+  (mensagens `[oversize_offer] ... trajectory for route '%s' not found. (tag '%s')`). Só as rotas do DLC têm.
+- **Regras nos nós da trajetória** (`def/world/trajectory_rules.sii`, 35 regras): ligar/desligar "escort special"
+  (luzes), bloquear nós de IA em cruzamentos (`bl`, `back_bl`, `circ_emp_bl`) e cancelar, parar o veículo,
+  liberar a parada quando o jogador chega (`canc_fr_st`, `canc_bc_st`), seções normal/perigosa/troca de faixa,
+  piscas, "escort near", mensagens (devagar, trecho apertado, faixa errada, abrir caminho).
+- **Criação do veículo** (ferramenta de debug do tráfego, 0x553e80–0x554450): tipos via 0x54e170 (frente) /
+  0x54e1e0 (trás) no gerente [exe+0x36ae7e8]; trajetória achada por 0x551e90 perto de um item; veículo criado
+  por 0x564b20(traffic, 0, params{tipo}, caminho, ...); 0x924520(veh, 8) + 0x939500 instalam um **controlador
+  de escolta** em veh+0x4f0 (objeto 0x158 bytes, vtable rva 0x2320518; update = 0x940580, todo em chamadas
+  virtuais — a lógica de distância ao jogador NÃO foi lida); 0x920cc0(veh, trajetória, vel, índice, ...) prende
+  o veículo à trajetória; 0x76e190/0x76e1f0 registram como escolta dianteira/traseira.
+- **Estado salvo** (oversize_job_save, offsets): posição no mundo (+0x18/+0x24), uid da trajetória (+0x30/+0x38),
+  posição AO LONGO dela (+0x40/+0x44), rotação (+0x48/+0x58), velocidade (+0x68/+0x6c), tipo/estado/semente,
+  spawn_escort_active (+0x88), trajectory_orders (+0x90), estado do gerente (+0xb8), kdop atual (+0xbc),
+  última posição válida do jogador (+0xc0), bloqueios ativos (+0xd0), hash da rota (+0xf8).
+- **Conclusão:** para "qualquer carga, qualquer destino" o sistema do DLC não serve direto (sem trajetórias fora
+  das 59 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
+  o da branch `escolta` (carro conduzido pelo rastro do caminhão), usando os MODELOS de escolta do DLC e
+  procurando o que a regra `on_special` liga no veículo (pista para o giroflex).
