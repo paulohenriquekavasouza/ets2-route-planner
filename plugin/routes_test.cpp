@@ -44,6 +44,10 @@ int main() {
   assert(std::abs(escort::Locate(trail, truck, 0.25, {-3.0, 0, -20}, north).side - 3.0) < 1e-9);
   const escort::Place front = escort::Locate(trail, truck, 0.25, {-25, 0, -40}, escort::Forward(0.25));
   assert(!front.on_trail && front.behind < -10 && !front.Good(escort::MIN_BEHIND)); // 15 m ahead of the truck
+  // traffic to clear before a spawn 30 m back: a car in our lane there, not the next lane, not one farther back
+  assert(escort::InTheWay(escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south), 15, 45));
+  assert(!escort::InTheWay(escort::Locate(trail, truck, 0.25, {4.0, 0, -20}, north), 15, 45));
+  assert(!escort::InTheWay(escort::Locate(trail, truck, 0.25, {0, 0, -2}, north), 15, 45)); // 48 m back
   // U-turn: 40 m north, across 4 m, 40 m back south. A car on the first leg is nearer to the return leg's
   // points in a straight line only where they overlap; with the hint it stays on the stretch it was on.
   escort::Trail uturn;

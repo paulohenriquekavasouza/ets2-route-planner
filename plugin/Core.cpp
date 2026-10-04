@@ -58,6 +58,7 @@ struct EscortSlot {
   bool requested = false; // spawn asked; look the car up when `wait` runs out
   int wait = 0;           // frames until the next spawn attempt / lookup
   int attempt = 0;        // spawns tried for the current car: each one a little farther back
+  int streak = 0;         // tries in a row without an accepted car (ESCORT_MAX_TRIES of them = a long pause)
   int astray = 0;         // frames in a row the car has been off our path or in front of us
   double hint = -1;       // m behind us it was last seen on the trail (keeps it on the right stretch after a U-turn)
   escort::Vec spawn_at;
@@ -66,6 +67,9 @@ struct EscortSlot {
   std::string note = "sem carro";
 };
 std::vector<EscortSlot> g_escort_slots = {{"Polícia", 30.0}};
+// Every try creates (and usually deletes) a vehicle inside the game: never in an endless burst.
+constexpr int ESCORT_MAX_TRIES = 10;         // tries in a row for one car...
+constexpr int ESCORT_COOLDOWN_FRAMES = 1200; // ...then this long without touching the spawner (~20 s)
 
 bool g_escort = true;           // call the escort by itself 250 m into a job started by the planner
 bool g_escort_supported = false;
@@ -501,7 +505,7 @@ int RemoveEscortCars() {
   for (auto& slot : g_escort_slots) {
     slot.car = {};
     slot.requested = false;
-    slot.wait = slot.attempt = slot.astray = 0;
+    slot.wait = slot.attempt = slot.streak = slot.astray = 0;
     slot.note = "sem carro";
   }
   return n;
@@ -530,7 +534,10 @@ std::string PoliceModelHere(const escort::Vec& truck) {
 void CallEscort(const escort::Vec& truck) {
   RemoveEscortCars();
   const std::string police = PoliceModelHere(truck);
-  for (auto& slot : g_escort_slots) slot.model = police; // every slot is a police car for now
+  for (auto& slot : g_escort_slots) {
+    slot.model = police; // every slot is a police car for now
+    slot.wait = 30;      // the cars just deleted leave first; also keeps a hammered Home key from spawning per press
+  }
   g_escort_active = !police.empty();
   g_escort_note = g_escort_active ? "escolta chamada" : "sem modelo de polícia para o país onde o caminhão está";
   Log("escolta: " + g_escort_note + (police.empty() ? "" : " (" + police + ")"));
@@ -546,8 +553,23 @@ void DropCar(EscortSlot& slot, const std::string& why, int wait) {
   Log(std::string("escolta (") + slot.label + "): " + why);
 }
 
+// One more try without a car. After ESCORT_MAX_TRIES in a row the spawner is left alone for a while.
+void EscortTryFailed(EscortSlot& slot, int wait) {
+  ++slot.attempt;
+  slot.wait = wait;
+  if (++slot.streak < ESCORT_MAX_TRIES) return;
+  slot.streak = 0;
+  slot.wait = ESCORT_COOLDOWN_FRAMES;
+  slot.note = std::to_string(ESCORT_MAX_TRIES) + " tentativas sem sucesso; nova rodada em ~20 s";
+  Log(std::string("escolta (") + slot.label + "): " + slot.note);
+}
+
 void UpdateEscort() {
   if (!g_tel || !g_escort_supported) return;
+  // Menus, loading, the map: the world is not being simulated; no spawning, deleting or steering there.
+  SPF_GameState gs{};
+  g_core->telemetry->Tel_GetGameState(g_tel, &gs, sizeof gs);
+  if (gs.paused) return;
   SPF_JobData jd{};
   g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
   SPF_TruckData td{};
@@ -556,6 +578,8 @@ void UpdateEscort() {
   const double heading = td.world_placement.orientation.heading;
   const double dt = std::clamp(static_cast<double>(g_core->ui->UI_GetDeltaTime()), 0.001, 0.1);
   char line[256];
+  // no truck in the world yet (all zeros) or garbage: nothing below makes sense
+  if (!std::isfinite(truck.x + truck.y + truck.z + heading) || (truck.x == 0 && truck.z == 0)) return;
 
   if (g_escort_armed) {
     if (jd.on_job) g_escort_seen_job = true;
@@ -623,22 +647,21 @@ void UpdateEscort() {
       if (!slot.car.ptr || !escort::LocateCar(slot.car, g_escort_trail, truck, heading, slot.hint, &born)) {
         slot.car = {};
         slot.note = "o carro não apareceu no tráfego";
-        slot.wait = 120;
-        ++slot.attempt;
         Log(std::string("escolta (") + slot.label + "): " + slot.note);
+        EscortTryFailed(slot, 120);
         continue;
       }
       g_escort_all.push_back(slot.car);
       if (!born.Good(escort::MIN_BEHIND)) { // in front of us, another lane, or oncoming: not an escort
         std::snprintf(line, sizeof line, "nasceu no lugar errado (%.0f m atrás, %.0f m de lado, sentido %.1f); tentando mais atrás", born.behind,
                       born.lateral, born.facing);
-        ++slot.attempt;
         DropCar(slot, line, 15);
+        EscortTryFailed(slot, 15);
         continue;
       }
       std::snprintf(line, sizeof line, "escolta (%s): carro aceito, %.0f m atrás, %.1f m de lado", slot.label, born.behind, born.lateral);
       Log(line);
-      slot.attempt = 0;
+      slot.attempt = slot.streak = 0;
       slot.hint = born.on_trail ? born.behind : -1;
       slot.note = "no lugar";
       continue;
@@ -650,6 +673,15 @@ void UpdateEscort() {
       const escort::Vec f = escort::Forward(heading);
       born = {{truck.x - f.x * behind, truck.y, truck.z - f.z * behind}, heading};
     }
+    // AI traffic on our lane around that point makes the game refuse ("no free space") or put the car
+    // elsewhere: delete it, and spawn once the game has dropped it.
+    if (const int cleared = escort::ClearLane(g_escort_trail, truck, heading, behind - 15.0, behind + 15.0, g_escort_all.data(), g_escort_all.size())) {
+      std::snprintf(line, sizeof line, "escolta (%s): %d veículo(s) do tráfego excluído(s) da faixa, %.0f m atrás", slot.label, cleared, behind);
+      Log(line);
+      slot.note = "abrindo espaço no tráfego atrás de você";
+      slot.wait = 10;
+      continue;
+    }
     slot.spawn_at = born.p;
     slot.hint = behind; // it is asked for on that stretch of the trail
     const bool ok = escort::Spawn(slot.model.c_str(), slot.spawn_at, born.heading);
@@ -658,8 +690,8 @@ void UpdateEscort() {
     Log(line);
     slot.note = ok ? "carro pedido ao jogo" : "o jogo recusou o spawn aqui; nova tentativa em instantes";
     slot.requested = ok;
-    slot.wait = ok ? 5 : 180;
-    if (!ok) ++slot.attempt;
+    slot.wait = 5;
+    if (!ok) EscortTryFailed(slot, 180);
   }
   if (++g_escort_log % 300 == 0) {
     for (const auto& slot : g_escort_slots) {

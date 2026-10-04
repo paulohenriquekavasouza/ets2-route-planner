@@ -109,7 +109,10 @@ inline bool Spawn(const char* model, const Vec& at, double heading) {
   }
 }
 
-// The traffic vehicle called `model` closest to `around` (within `radius`), or an empty Car.
+// The car we just spawned: the traffic vehicle called `model` closest to `around` (within `radius`)
+// that is still debug-paused (only `spawn vehicle` cars are) and not being removed. Without those two
+// checks a real police car of the ordinary traffic, or a car we dropped a moment ago, could be taken
+// for ours (and then deleted or driven). Empty Car if none.
 inline Car Find(const char* model, const Vec& around, double radius) {
   Car best;
   __try {
@@ -122,6 +125,8 @@ inline Car Find(const char* model, const Vec& around, double radius) {
       uint8_t* v = game::Ptr(data + i * 16, 0);
       const char* name = v ? *reinterpret_cast<const char* const*>(v + 0x518) : nullptr;
       if (!name || std::strcmp(name, model) != 0) continue;
+      const uint64_t flags = *reinterpret_cast<const uint64_t*>(v + 0x4b8);
+      if (!(flags & FLAG_DEBUG_PAUSE) || (flags & FLAG_REMOVE)) continue;
       const Vec p = Position(v);
       const double d = (p.x - around.x) * (p.x - around.x) + (p.z - around.z) * (p.z - around.z);
       if (d < best_d) {
@@ -465,6 +470,38 @@ inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double tru
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }
+}
+
+// Is a vehicle at `pl` in the way of a spawn on our lane between `from` and `to` metres behind us?
+inline bool InTheWay(const Place& pl, double from, double to) { return pl.behind >= from && pl.behind <= to && pl.lateral <= 2.5; }
+
+// Deletes the AI traffic standing on our lane between `from` and `to` metres behind the truck (where a
+// car is about to be spawned), except the `keep` cars. Returns how many were deleted; the game drops
+// them on its next traffic update, so spawn a few frames later.
+// ponytail: only entries with a name and a lane (+0x428) are touched, assuming that leaves out anything
+// in the array that is not a driving AI vehicle (a towed trailer); check with a probe if one ever vanishes alone.
+inline int ClearLane(const Trail& trail, const Vec& truck, double truck_heading, double from, double to, const Car* keep, size_t keep_n) {
+  int removed = 0;
+  __try {
+    const uint8_t* const mgr = *game::At<uint8_t**>(TRAFFIC);
+    if (!mgr) return 0;
+    const uint8_t* data = game::Ptr(mgr, 0xf8);
+    const uint64_t n = *reinterpret_cast<const uint64_t*>(mgr + 0x100);
+    for (uint64_t i = 0; data && i < n && i < 4096 && removed < 8; ++i) {
+      uint8_t* v = game::Ptr(data + i * 16, 0);
+      if (!v || !*reinterpret_cast<const char* const*>(v + 0x518) || !game::Ptr(v, 0x428)) continue;
+      uint64_t* flags = reinterpret_cast<uint64_t*>(v + 0x4b8);
+      if (*flags & FLAG_REMOVE) continue;
+      bool ours = false;
+      for (size_t k = 0; k < keep_n; ++k) ours |= keep[k].ptr == v;
+      if (ours || !InTheWay(Locate(trail, truck, truck_heading, Position(v), CarForward(v), (from + to) / 2), from, to)) continue;
+      game::At<void (*)(void*)>(DETACH)(v + 0x80);
+      *flags |= FLAG_REMOVE;
+      ++removed;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+  return removed;
 }
 
 // Where a car that was just spawned ended up (to accept or reject it). False if it is gone.

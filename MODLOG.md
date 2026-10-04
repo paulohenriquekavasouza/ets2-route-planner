@@ -575,3 +575,18 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - **Plugin:** `escort::LightsOn(car, 0x1000|0x2000)` chama o virtual +0x80 do objeto de luzes a cada quadro
   (caixa "Giroflex ligado" no painel; para de tentar após 5 falhas). NÃO testado no jogo: pode piscar se o
   jogo limpar a máscara depois do nosso quadro, ou não ter efeito se emergency depender de outra coisa.
+
+## escolta: barreiras de segurança no spawn (2026-10-04, núcleo, sem mudar a versão)
+Levantamento nos logs até aqui: 170 spawns feitos, 8 aceitos, 162 "nasceu no lugar errado", 31 recusados
+pelo jogo ("access not allowed" 30, "no free space" 3). Não havia limite: um carro criado e excluído a cada ~20 quadros, para sempre.
+Problemas achados e o que foi feito:
+- Tentativas sem fim -> `ESCORT_MAX_TRIES` = 10 seguidas, depois `ESCORT_COOLDOWN_FRAMES` = 1200 (~20 s) sem tocar no spawner (`EscortTryFailed`).
+- `escort::Find` pegava qualquer carro com o mesmo modelo a 150 m: podia adotar (e depois excluir/dirigir) uma viatura
+  do tráfego normal ou um carro nosso já marcado para remoção -> agora exige bit 63 (debug_pause, só carros do `spawn vehicle`) e sem bit 24.
+- Spawn/remoção com o jogo pausado (menu, mapa, carregando) -> `UpdateEscort` não faz nada com `SPF_GameState.paused`.
+- Caminhão ainda fora do mundo (posição 0/NaN) -> sai antes de qualquer coisa.
+- Home várias vezes seguidas = um spawn por toque -> 30 quadros de espera após chamar.
+- Tráfego na faixa: `escort::ClearLane` exclui (DETACH + bit 24, como o jogo) os veículos de IA na nossa faixa
+  (até 2,5 m do rastro) entre 15 m antes e 15 m depois do ponto de spawn, espera 10 quadros e só então pede o carro.
+  Só mexe em entradas com nome e faixa (+0x428); não foi verificado se reboques de IA estão na mesma lista.
+Não testado em jogo ainda (jogo fechado na hora).
