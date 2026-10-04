@@ -675,7 +675,8 @@ void UpdateEscort() {
     }
     // AI traffic on our lane around that point makes the game refuse ("no free space") or put the car
     // elsewhere: delete it, and spawn once the game has dropped it.
-    if (const int cleared = escort::ClearLane(g_escort_trail, truck, heading, behind - 15.0, behind + 15.0, g_escort_all.data(), g_escort_all.size())) {
+    // From MIN_BEHIND: nearer than that is our own truck and trailer (which is not AI traffic anyway).
+    if (const int cleared = escort::ClearLane(g_escort_trail, truck, heading, escort::MIN_BEHIND, behind + 15.0, g_escort_all.data(), g_escort_all.size())) {
       std::snprintf(line, sizeof line, "escolta (%s): %d veículo(s) do tráfego excluído(s) da faixa, %.0f m atrás", slot.label, cleared, behind);
       Log(line);
       slot.note = "abrindo espaço no tráfego atrás de você";

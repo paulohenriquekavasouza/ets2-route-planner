@@ -590,3 +590,4 @@ Problemas achados e o que foi feito:
   (até 2,5 m do rastro) entre 15 m antes e 15 m depois do ponto de spawn, espera 10 quadros e só então pede o carro.
   Só mexe em entradas com nome e faixa (+0x428); não foi verificado se reboques de IA estão na mesma lista.
 Não testado em jogo ainda (jogo fechado na hora).
+- Ajuste: a limpeza da faixa agora começa em `MIN_BEHIND` (18 m atrás do caminhão, logo após o reboque) em vez de 15 m antes do ponto de spawn.
