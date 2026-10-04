@@ -37,7 +37,7 @@ int main() {
   // a car 30 m back in our lane facing our way is a good place; the next lane, oncoming, or in front of us is not
   const escort::Vec truck{-10, 0, -40}, north{0, 0, -1}, south{0, 0, 1};
   assert(escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, north).Good(escort::MIN_BEHIND));
-  assert(!escort::Locate(trail, truck, 0.25, {4.0, 0, -20}, north).Good(escort::MIN_BEHIND)); // 4 m aside = next lane
+  assert(!escort::Locate(trail, truck, 0.25, {3.0, 0, -20}, north).Good(escort::MIN_BEHIND)); // 3 m aside = next lane
   assert(!escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south).Good(escort::MIN_BEHIND)); // oncoming
   const escort::Place front = escort::Locate(trail, truck, 0.25, {-25, 0, -40}, escort::Forward(0.25));
   assert(!front.on_trail && front.behind < -10 && !front.Good(escort::MIN_BEHIND)); // 15 m ahead of the truck

@@ -484,3 +484,23 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Testes: projeção, lugar bom/ruim (faixa ao lado, contramão, à frente), velocidades.
 - Limite conhecido: em cruzamentos a IA pode ir por outro caminho → troca de carro (aparece outro atrás).
   NÃO testado no jogo.
+
+## v2.6.2 (branch `escolta`, 2026-10-04) — seguir pelos cruzamentos (curva forçada) e faixa do spawn
+- v2.6.1 confirmado: o carro segue (IA por velocidade). Faltava: virar junto nos cruzamentos; e em rodovia
+  de várias faixas às vezes nasce na faixa ao lado.
+- **"Force navigation" do editor de tráfego** (0xcd1b00; strings "Traffic tool sub mode: Force navigation"):
+  - posição → item do mapa: `0x6c6510(pos16*, false, raio 8.0|20.0, flag)` (pos16 = f32 x,y,z + i16 setores);
+  - item do mapa → objeto de tráfego: `0x6d60f0(traffic_mgr, item)`;
+  - objeto → faixa/curva mais próxima: virtual +0x80 `(obj, &{item*, dist=-1}, &placement32, 0x8000)`;
+  - curva: virtual +0x08 = tipo (0x500000 = faixa de estrada comum, não pode); virtual +0x40 → flags de acesso
+    (máscara 0xffffffffff = IA pode usar);
+  - **`0x94d090(curva, on)`**: liga bit 6 de curva+0x74 ("forçada"), registra numa lista global (rva 0x2d895e0)
+    e liga bit 7 nas curvas irmãs (mesma entrada, outras saídas) → toda IA que chega por aquela entrada segue a
+    curva forçada. `0x94cfb0` mexe só no bit 7. `0x9452a0(objeto)` atualiza.
+- **Plugin:** com a escolta ativa, a cada quadro `escort::CurveAt(posição do caminhão)`; se for curva de
+  cruzamento nova → `ForceCurve(true)` e guarda com o hodômetro. Libera (`ForceCurve(false)`) quando o caminhão
+  andou (maior distância da escolta + 60 m) além dela, ou ao dispensar/terminar/trocar. Máx. 24 de uma vez.
+  Efeito colateral: nesse intervalo TODO o tráfego que entra por ali faz a mesma curva.
+  No OnUnload nada é chamado → curvas ainda forçadas ficam assim até reiniciar o jogo (dispensar antes).
+- Faixa do spawn: `Place::Good` agora exige ≤ 1,8 m de lado (antes 2,5; faixas têm 3,5–4,5 m).
+- NÃO testado no jogo.

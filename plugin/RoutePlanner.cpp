@@ -72,6 +72,12 @@ bool g_escort_seen_job = false; // telemetry has reported that job (it lags the 
 float g_escort_from_km = 0;     // odometer when the job started
 std::vector<escort::Car> g_escort_all; // every car we spawned and have not deleted yet
 escort::Trail g_escort_trail;   // where the truck has been
+// Junction curves the truck drove, forced so the escort takes the same way; released once it is through.
+struct ForcedCurve {
+  escort::Curve curve;
+  double at_km; // odometer when the truck was on it
+};
+std::vector<ForcedCurve> g_escort_forced;
 std::string g_escort_note = "Home cria a escolta agora; num serviço iniciado pelo planejador ela vem após 250 m";
 int g_escort_log = 0;
 SPF_Window_Handle* g_escort_window = nullptr;
@@ -484,8 +490,18 @@ void FilterUnknownCargo() {
 // ---- police escort (escort.h) ----
 std::vector<MapPoint> CityPoints();
 
+// Gives the junctions back to the game (everything we forced), or only the ones the escort is past.
+void ReleaseCurves(double now_km, double keep_km) {
+  std::erase_if(g_escort_forced, [&](const ForcedCurve& f) {
+    if (keep_km > 0 && now_km - f.at_km < keep_km) return false;
+    escort::ForceCurve(f.curve, false);
+    return true;
+  });
+}
+
 // Deletes every car we spawned (the ones following and the ones we lost on the way).
 int RemoveEscortCars() {
+  ReleaseCurves(0, 0);
   int n = 0;
   for (const auto& c : g_escort_all) n += escort::Remove(c);
   g_escort_all.clear();
@@ -563,6 +579,20 @@ void UpdateEscort() {
     CallEscort(truck); // 250 m into the job, and moving
   g_escort_trail.Add({truck, heading}); // always: a trail already there lets the first car be born in our lane
   if (!g_escort_active) return;
+
+  // Junctions: force the curve the truck is on, so the cars behind take the same exit; release it once
+  // the last escort car must be through (its distance behind us plus a margin).
+  if (const escort::Curve here = escort::CurveAt(truck); here.item) {
+    const bool known = std::any_of(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
+    if (!known && g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
+      g_escort_forced.push_back({here, td.odometer});
+      std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada (%d ativas)", static_cast<void*>(here.item), static_cast<int>(g_escort_forced.size()));
+      Log(line);
+    }
+  }
+  double farthest = 0;
+  for (const auto& slot : g_escort_slots) farthest = std::max(farthest, std::max(slot.gap, slot.car.ptr ? slot.place.behind : 0.0));
+  ReleaseCurves(td.odometer, (farthest + 60.0) / 1000.0);
 
   for (auto& slot : g_escort_slots) {
     if (slot.car.ptr) {
@@ -921,8 +951,10 @@ void OnActivated(const SPF_Core_API* core) {
 
 void OnUnload() {
   // No calls into the game from here: the unload runs inside the game's "sdk reinit", and deleting
-  // traffic cars at that point took the game down (MODLOG v2.5.1). The cars are left to the AI.
+  // traffic cars at that point took the game down (MODLOG v2.5.1). The cars are left to the AI, and
+  // curves still forced stay forced until the game restarts (dismiss the escort before reloading).
   g_escort_all.clear();
+  g_escort_forced.clear();
   g_escort_window = nullptr;
   g_escort_armed = false;
   if (g_core && g_core->ui && g_mouse_taken) {

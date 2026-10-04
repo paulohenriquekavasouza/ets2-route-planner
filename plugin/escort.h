@@ -24,6 +24,20 @@ constexpr unsigned char kSpawnSig[10] = {0x40, 0x55, 0x53, 0x57, 0x41, 0x56, 0x4
 constexpr uintptr_t DETACH = 0xace9e0;
 constexpr unsigned char kDetachSig[10] = {0x40, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xf9, 0x48};
 constexpr uint64_t FLAG_REMOVE = 1ull << 24;
+// Junctions: the traffic editor's "Force navigation" (0xcd1b00). Position -> map item (0x6c6510) ->
+// its traffic object (0x6d60f0) -> nearest lane/curve (virtual +0x80). 0x94d090(curve, on) sets bit 6
+// of curve+0x74 ("forced") and bit 7 on its sibling curves (same entry, other exits), so every AI car
+// that reaches that entry takes the forced curve; 0x9452a0(traffic object) refreshes it. Plain road
+// lanes report type 0x500000 and cannot be forced.
+constexpr uintptr_t MAP_ITEM_AT = 0x6c6510, TRAFFIC_OBJECT = 0x6d60f0, FORCE_CURVE = 0x94d090, REFRESH_OBJECT = 0x9452a0;
+constexpr unsigned char kJunctionSigs[4][10] = {
+    {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xc8, 0x00, 0x00, 0x00},
+    {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10},
+    {0x48, 0x89, 0x5c, 0x24, 0x18, 0x48, 0x89, 0x7c, 0x24, 0x20},
+    {0x48, 0x89, 0x4c, 0x24, 0x08, 0x55, 0x41, 0x54, 0x41, 0x55},
+};
+constexpr int LANE_ROAD = 0x500000;
+constexpr uint64_t AI_ACCESS = 0xffffffffffull;
 // `spawn vehicle` creates the car with bit 63 (debug_pause) set: it stands still until cleared.
 constexpr uint64_t FLAG_DEBUG_PAUSE = 1ull << 63;
 
@@ -40,6 +54,9 @@ struct Car {
 };
 
 inline bool Supported() {
+  const uintptr_t junction[4] = {MAP_ITEM_AT, TRAFFIC_OBJECT, FORCE_CURVE, REFRESH_OBJECT};
+  for (int i = 0; i < 4; ++i)
+    if (std::memcmp(game::At<const void*>(junction[i]), kJunctionSigs[i], 10) != 0) return false;
   return std::memcmp(game::At<const void*>(SPAWN), kSpawnSig, sizeof kSpawnSig) == 0 &&
          std::memcmp(game::At<const void*>(DETACH), kDetachSig, sizeof kDetachSig) == 0;
 }
@@ -177,6 +194,64 @@ inline bool Remove(const Car& c) {
   }
 }
 
+// ---- junctions ----------------------------------------------------------------------------------
+struct Curve {
+  uint8_t* item = nullptr;  // the junction curve under a position (never a plain road lane)
+  uint8_t* owner = nullptr; // the traffic object (prefab) it belongs to
+};
+
+// The forceable curve at `p`: the one a vehicle standing there is driving. Empty on plain road.
+inline Curve CurveAt(const Vec& p) {
+  struct Pos {
+    float x, y, z;
+    int16_t sx, sz;
+    float q[4];
+  };
+  struct Found {
+    uint8_t* item;
+    float dist;
+  };
+  Curve out;
+  __try {
+    uint8_t* const mgr = *game::At<uint8_t**>(TRAFFIC);
+    if (!mgr) return out;
+    Pos pos{};
+    pos.sx = static_cast<int16_t>(std::floor(p.x / 512.0));
+    pos.sz = static_cast<int16_t>(std::floor(p.z / 512.0));
+    pos.x = static_cast<float>(p.x - pos.sx * 512.0);
+    pos.y = static_cast<float>(p.y);
+    pos.z = static_cast<float>(p.z - pos.sz * 512.0);
+    pos.q[0] = 1.0f;
+    using ItemAtFn = void* (*)(void*, bool, float, bool);
+    void* map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 8.0f, false);
+    if (!map_item) map_item = game::At<ItemAtFn>(MAP_ITEM_AT)(&pos, false, 20.0f, true);
+    if (!map_item) return out;
+    uint8_t* const owner = game::At<uint8_t* (*)(void*, void*)>(TRAFFIC_OBJECT)(mgr, map_item);
+    if (!owner) return out;
+    Found found{nullptr, -1.0f};
+    using NearestFn = bool (*)(void*, Found*, Pos*, uint32_t);
+    if (!(*reinterpret_cast<NearestFn**>(owner))[16](owner, &found, &pos, 0x8000) || !found.item) return out;
+    void** vt = *reinterpret_cast<void***>(found.item);
+    if (reinterpret_cast<int (*)(void*)>(vt[1])(found.item) == LANE_ROAD) return out;
+    const uint64_t* access = reinterpret_cast<const uint64_t* (*)(void*)>(vt[8])(found.item);
+    if (!access || !(*access & AI_ACCESS)) return out;
+    out = {found.item, owner};
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    out = {};
+  }
+  return out;
+}
+
+inline bool ForceCurve(const Curve& c, bool on) {
+  __try {
+    game::At<void (*)(void*, bool)>(FORCE_CURVE)(c.item, on);
+    game::At<void (*)(void*)>(REFRESH_OBJECT)(c.owner);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // ---- following the truck's own path ------------------------------------------------------------
 // The car stays an ordinary AI car (it steers, its wheels turn, the physics is the game's). What we
 // add is the escort's brain, like the Special Transport controller: where the car is relative to the
@@ -269,7 +344,8 @@ struct Place {
   double lateral = 0;  // m off our path
   double facing = 0;   // 1 = same direction as us there, -1 = oncoming
   bool on_trail = false;
-  bool Good(double min_behind) const { return behind >= min_behind && lateral <= 2.5 && facing >= 0.7; }
+  // lanes are 3.5-4.5 m apart and the trail runs down the middle of ours: 1.8 m still means "our lane"
+  bool Good(double min_behind) const { return behind >= min_behind && lateral <= 1.8 && facing >= 0.7; }
 };
 
 inline Place Locate(const Trail& trail, const Vec& truck, double truck_heading, const Vec& car, const Vec& car_forward) {
