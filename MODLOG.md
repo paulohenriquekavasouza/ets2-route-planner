@@ -339,8 +339,8 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 ## Estudo (sem implementar): escolta do DLC Transporte Especial (2026-10-04)
 Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualquer carga/destino.
 - **Dados** (`dlc_oversize/def`): `oversize_data.sii` (escort_max_speed 80 km/h; escort_dangerous_objects:
-  rail_train, slow, rail_tram); `route*.sii` = 59 `route_data` (só from_city/to_city); `oversize_offer_data*.sii`
-  = ofertas (rota + carga + limites de tempo + dimensões + cutscenes). Veículos: `traffic.transport_t6.escort_N.back`
+  rail_train, slow, rail_tram); `route*.sii` = 65 `route_data` (59 no arquivo base; só from_city/to_city); `oversize_offer_data*.sii`
+  = 272 ofertas (rota + carga + limites de tempo + dimensões + cutscenes). Veículos: `traffic.transport_t6.escort_N.back`
   / `.front` (tipos `escort_back`/`escort_front`, tag `escort_all`, back com `flares_beacon_min0max28`).
 - **O caminho da escolta NÃO é calculado: é desenhado no mapa.** O jogo procura *itens de trajetória* com tags
   da rota: "Front/Back escort trajectory", "Escort meet/leave trajectory", "Offer point", "Trailer start/end"
@@ -360,6 +360,6 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   spawn_escort_active (+0x88), trajectory_orders (+0x90), estado do gerente (+0xb8), kdop atual (+0xbc),
   última posição válida do jogador (+0xc0), bloqueios ativos (+0xd0), hash da rota (+0xf8).
 - **Conclusão:** para "qualquer carga, qualquer destino" o sistema do DLC não serve direto (sem trajetórias fora
-  das 59 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
+  das 65 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
   o da branch `escolta` (carro conduzido pelo rastro do caminhão), usando os MODELOS de escolta do DLC e
   procurando o que a regra `on_special` liga no veículo (pista para o giroflex).
