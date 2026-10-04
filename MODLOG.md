@@ -443,3 +443,17 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   das 65 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
   o da branch `escolta` (carro conduzido pelo rastro do caminhão), usando os MODELOS de escolta do DLC e
   procurando o que a regra `on_special` liga no veículo (pista para o giroflex).
+
+## v2.6.0 (branch `escolta`, 2026-10-04) — retomada: master v2.5 trazida, escolta em lista, Home chama a escolta
+- Merge da master (v2.5: favoritas, maior rota, cidade atual + estudo do DLC) nesta branch; a master, a tag
+  v2.5 e o backup v2.5 não foram tocados. Conflitos: versão (→ 2.6.0), routes_test (os dois lados), MODLOG.
+- **Escolta como lista** (`g_escort_slots`, `EscortSlot`): rótulo, distância atrás pelo rastro, modelo, carro,
+  estado próprio. Hoje 1 entrada ("Polícia", 30 m). Outro veículo = mais uma entrada com outra distância;
+  `CallEscort` é onde se decide o modelo de cada uma.
+- **País atual:** `PoliceModelHere` = polícia do país da cidade mais próxima do caminhão (CityPoints +
+  NearestPoint da master), decidido na hora de chamar a escolta (não mais o país da origem do serviço).
+- **Home = chamar/trocar a escolta agora**, com ou sem serviço (ação `Routes.escort`; settings.json já tinha
+  KEY_HOME e a janela Escolta). Painel da escolta: botão "Escolta" na barra do topo do F8; nele "Chamar/Trocar
+  a escolta agora" e "Dispensar a escolta". A regra automática (250 m após iniciar serviço) continua.
+- Spawn de cada carro no ponto do rastro a (distância + 15 m); rastro curto → em linha reta atrás.
+- A testar no jogo: condução pelo rastro (`escort::Drive`, corpo físico), nunca exercitada.
