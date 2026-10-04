@@ -345,26 +345,38 @@ inline float Refuel() {
 // markup (<br>, <color value=@@clr_sel@@>, @@keys@@), UTF-8. Call from the game thread only.
 constexpr uintptr_t HINT_SHOW = 0xa63920;
 constexpr unsigned char kHintSig[10] = {0x40, 0x53, 0x48, 0x81, 0xec, 0x40, 0x04, 0x00, 0x00, 0x48};
-inline uint8_t* HintPanel(uint8_t** hud_out) {
+// `why` (optional): 0 found, 2 no UI object, 100 + state when the game is not in a driving state, 4 no HUD,
+// 5 no panel holder, 6 no panel.
+inline uint8_t* HintPanel(uint8_t** hud_out, int* why = nullptr) {
+  int w = 0;
   uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
   uint8_t* const ui = owner ? Ptr(owner, 0x2b30) : nullptr;
-  if (!ui || ui[0x210] < 3 || ui[0x210] > 5) return nullptr;
-  uint8_t* const hud = Ptr(ui, 0xb0);
+  uint8_t* const hud = ui ? Ptr(ui, 0xb0) : nullptr;
   uint8_t* const holder = hud ? Ptr(hud, 0x50) : nullptr;
-  uint8_t* const adv = holder ? Ptr(holder, 0x340) : nullptr;
+  uint8_t* adv = holder ? Ptr(holder, 0x340) : nullptr;
+  if (!ui) w = 2;
+  else if (ui[0x210] < 3 || ui[0x210] > 5) w = 100 + ui[0x210];
+  else if (!hud) w = 4;
+  else if (!holder) w = 5;
+  else if (!adv) w = 6;
+  if (why) *why = w;
+  if (w) adv = nullptr;
   if (adv && hud_out) *hud_out = hud;
   return adv;
 }
-inline bool ShowHint(const char* title, const char* text) {
-  if (std::memcmp(At<const void*>(HINT_SHOW), kHintSig, sizeof kHintSig) != 0) return false;
+// 0 = sent; 1 game not recognised, 7 panel busy, 9 exception, otherwise HintPanel's reason.
+inline int ShowHint(const char* title, const char* text) {
+  if (std::memcmp(At<const void*>(HINT_SHOW), kHintSig, sizeof kHintSig) != 0) return 1;
   __try {
     uint8_t* hud = nullptr;
-    uint8_t* const adv = HintPanel(&hud);
-    if (!adv || adv[0xf39]) return false;
+    int why = 0;
+    uint8_t* const adv = HintPanel(&hud, &why);
+    if (!adv) return why;
+    if (adv[0xf39]) return 7;
     At<void (*)(void*, const char**, const char**)>(HINT_SHOW)(hud, &title, &text);
-    return true;
+    return 0;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
+    return 9;
   }
 }
 // Hides the box, but only if it still shows `shown` ("title|text"): the game's own hints use the same box.
@@ -376,7 +388,7 @@ inline bool HideHint(const char* shown) {
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }
-  return ShowHint("", "");
+  return ShowHint("", "") == 0;
 }
 
 inline bool CancelJob() {

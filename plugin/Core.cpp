@@ -611,9 +611,13 @@ void Update() {
   }
   if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
   if (g_hint_in >= 0 && g_hint_in-- == 0) {
-    const bool shown = game::ShowHint(g_hint_title.c_str(), g_hint_text.c_str());
-    Log(std::string("caixa de aviso do jogo: ") + (shown ? "mensagem enviada" : "não deu (fora da direção, painel ocupado ou jogo não reconhecido)"));
-    if (shown) g_hint_off_in = 600; // ~10 s
+    static int tries = 0, last = -1;
+    const int why = game::ShowHint(g_hint_title.c_str(), g_hint_text.c_str());
+    if (why != last) Log("caixa de aviso do jogo: " + (why == 0 ? std::string("mensagem enviada") : "ainda não (motivo " + std::to_string(why) + ")"));
+    last = why;
+    if (why == 0) g_hint_off_in = 600, tries = 0, last = -1; // ~10 s
+    else if (++tries < 40) g_hint_in = 30;                   // the teleport fades the screen: keep trying for ~20 s
+    else tries = 0, last = -1;
   }
   if (g_hint_off_in >= 0 && g_hint_off_in-- == 0)
     Log(std::string("caixa de aviso do jogo: ") + (game::HideHint((g_hint_title + "|" + g_hint_text).c_str()) ? "mensagem retirada" : "já não era a nossa; nada feito"));
