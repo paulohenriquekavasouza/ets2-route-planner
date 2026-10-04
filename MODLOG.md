@@ -331,3 +331,7 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   Roda no OnUpdate (`Pending::CurrentCity`) porque consulta o jogo. Mostra a cidade e a distância no mapa.
 - Limite conhecido: "cidade" = onde ficam as empresas dela; numa estrada longe de tudo, vale a mais próxima.
 - NÃO testado no jogo.
+
+# ===== v2.5 (2026-10-04) =====
+- Usuário confirmou ("funcionou"): botão "Cidade atual". **v2.5.0**, tag `v2.5`, backup em
+  `D:\Projetos\_backupsts2-routes2.5\` + `v2.5.zip`.
