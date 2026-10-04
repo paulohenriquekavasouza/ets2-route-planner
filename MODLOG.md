@@ -363,3 +363,13 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   das 65 rotas; criar trajetórias em tempo de execução exigiria RE do traffic_trajectory_t). O caminho viável é
   o da branch `escolta` (carro conduzido pelo rastro do caminhão), usando os MODELOS de escolta do DLC e
   procurando o que a regra `on_special` liga no veículo (pista para o giroflex).
+
+## v2.5.1 (master, 2026-10-04) — recarga automática (hospedeira + núcleo), sem escolta
+- Trazida da branch `escolta` só a recarga automática; o resto é a v2.5.
+  - `RoutePlanner.dll` = hospedeira (`Host.cpp`): manifesto, tecla F8, janela, fonte; observa `core\RoutePlannerCore.dll`
+    a cada 30 quadros e recarrega a cópia em `core\live\` quando o arquivo muda.
+  - `core\RoutePlannerCore.dll` = núcleo (`Core.cpp`, antes `RoutePlanner.cpp`): toda a UI e a lógica; contrato em `core_api.h`.
+  - `deploy.ps1`: troca o núcleo de forma atômica (aparece "núcleo #N" no framework.log em ~1 s); a hospedeira só é
+    substituída se mudou, e aí precisa de "Recarregar Framework" (a versão do CMake mora nela: não subir a versão a cada ajuste).
+- O bloqueio do mouse passa pela hospedeira (o SPF identifica o pedido pelo endereço de retorno).
+- Compila e os testes passam; recarga em si já testada em jogo na branch `escolta`. Esta montagem ainda não foi testada em jogo.

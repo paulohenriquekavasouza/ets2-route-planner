@@ -1,13 +1,14 @@
-// RoutePlanner — SPF-Framework plugin for ETS2 1.61.1.1. F8 opens a window to pick origin and
-// destination cities (filtered by country) and a cargo, and starts that job right away; it also
-// shows and cancels the current job. Single player only.
+// RoutePlannerCore — everything RoutePlanner does (ETS2 1.61.1.1, single player only): the F8 window
+// to pick origin, destination and cargo and start that job right away, favourites and the current
+// job. The host (Host.cpp) loads this DLL and reloads it whenever the file changes, so nothing here
+// may outlive Shutdown().
 #include <SPF_GameConsole_API.h>
-#include <SPF_KeyBinds_API.h>
 #include <SPF_Logger_API.h>
-#include <SPF_Manifest_API.h>
 #include <SPF_Plugin.h>
 #include <SPF_Telemetry_API.h>
 #include <SPF_UI_API.h>
+
+#include "core_api.h"
 
 #include <atomic>
 #include <cstdio>
@@ -20,6 +21,7 @@
 
 namespace {
 
+CoreApi g_api{};
 const SPF_Core_API* g_core = nullptr;
 SPF_Logger_Handle* g_log = nullptr;
 SPF_Telemetry_Handle* g_tel = nullptr;
@@ -67,16 +69,7 @@ void Log(const std::string& msg) {
   if (g_core && g_log) g_core->logger->Log(g_log, SPF_LOG_INFO, msg.c_str());
 }
 
-std::string PluginDir() {
-  char buf[MAX_PATH] = {};
-  HMODULE self = nullptr;
-  GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(&PluginDir),
-                     &self);
-  GetModuleFileNameA(self, buf, MAX_PATH);
-  std::string dir(buf);
-  dir.erase(dir.find_last_of("\\/") + 1);
-  return dir;
-}
+std::string PluginDir() { return g_api.plugin_dir ? g_api.plugin_dir : ""; } // the host's folder; this DLL runs from core\live\
 
 const Named* Find(const std::vector<Named>& v, const std::string& tok) {
   for (const auto& n : v)
@@ -98,9 +91,6 @@ bool Matches(const std::string& text, const char* filter) {
   return low(text).find(low(filter)) != std::string::npos;
 }
 
-// The mouse belongs to the window while it is open (cursor shown, camera still). One call site only:
-// SPF keys mouse-block requests by return address.
-__declspec(noinline) void SetMouseBlocked(SPF_UI_API* ui, bool blocked) { ui->UI_SetMouseBlockState(blocked, blocked, false); }
 
 // =================================================================================================
 // Drawing
@@ -584,15 +574,17 @@ void RunPending() {
   }
 }
 
-void OnToggleKey() { g_toggle = true; }
+void Key(int key) {
+  if (key == CORE_KEY_PLANNER) g_toggle = true;
+}
 
-void OnUpdate() {
+void Update() {
   if (!g_core || !g_core->ui || !g_window) return;
   SPF_UI_API* ui = g_core->ui;
   if (g_toggle.exchange(false)) ui->UI_SetVisibility(g_window, !ui->UI_IsVisible(g_window));
-  const bool open = ui->UI_IsVisible(g_window); // Esc in SPF can also close it
+  const bool open = ui->UI_IsVisible(g_window); // Esc in SPF can also close it; the mouse is ours while it is open
   if (open != g_mouse_taken) {
-    SetMouseBlocked(ui, open);
+    g_api.SetMouseBlocked(open);
     ui->UI_SetMouseOverride(open);
     g_mouse_taken = open;
   }
@@ -610,89 +602,32 @@ void OnUpdate() {
   }
 }
 
-// =================================================================================================
-// Registration and lifecycle
-// =================================================================================================
-const uint16_t kGlyphs[] = {0x0020, 0x00FF, 0x2026, 0x2026, 0x2190, 0x2192, 0x20AC, 0x20AC, 0};
+void DrawPlanner(SPF_UI_API* ui) { Draw(ui, nullptr); }
 
-void OnRegisterUI(SPF_UI_API* ui) {
-  const auto flags = static_cast<SPF_WindowFlags>(SPF_WINDOW_FLAG_NO_COLLAPSE | SPF_WINDOW_FLAG_NO_SAVED_SETTINGS);
-  ui->UI_RegisterDrawCallbackWithFlags(PLUGIN_NAME, "Planejador", Draw, nullptr, flags);
-  g_window = ui->UI_GetWindowHandle(PLUGIN_NAME, "Planejador");
-  if (g_window) ui->UI_SetVisibility(g_window, false);
-  static bool fonts_requested = false;
-  if (!fonts_requested) {
-    fonts_requested = true;
-    char win[MAX_PATH] = {};
-    GetWindowsDirectoryA(win, MAX_PATH);
-    const SPF_Font_Config body{18.0f, false, kGlyphs};
-    ui->UI_LoadFontFromFile("rp_body", (std::string(win) + "\\Fonts\\seguisb.ttf").c_str(), &body);
-  }
-}
-
-void BuildManifest(SPF_Manifest_Builder_Handle* h, const SPF_Manifest_Builder_API* api) {
-  api->Info_SetName(h, PLUGIN_NAME);
-  api->Info_SetVersion(h, PLUGIN_VERSION);
-  api->Info_SetMinFrameworkVersion(h, "1.2.0");
-  api->Info_SetAuthor(h, "Paulo");
-  api->Info_SetDescriptionLiteral(h, "Planejador de rotas: escolha origem, destino e carga e comece o serviço na hora. Somente single-player.");
-  api->Policy_SetAllowUserConfig(h, true);
-  api->Policy_AddConfigurableSystem(h, "ui");
-  api->Defaults_SetLogging(h, "info", false);
-  api->Policy_AddRequiredHook(h, "GameConsole"); // g_set_time / g_set_weather before starting a job
-  api->Defaults_AddKeybind(h, "Routes", "toggle", "keyboard", "KEY_F8", "always");
-  api->Meta_AddKeybind(h, "Routes", "toggle", "Abrir planejador", "Abre/fecha a janela de rotas.");
-  // name, visible, interactive, x, y, w, h, collapsed, autoscroll
-  api->Defaults_AddWindow(h, "Planejador", false, true, 560, 120, 520, 760, false, false);
-  api->Meta_AddWindow(h, "Planejador", "Planejador de rotas", "Origem, destino, carga e o serviço atual.");
-}
-
-void OnLoad(const SPF_Load_API* load) {
-  if (load && load->logger) g_log = load->logger->Log_GetContext(PLUGIN_NAME);
-}
-
-void OnActivated(const SPF_Core_API* core) {
-  g_core = core;
-  if (core->telemetry) g_tel = core->telemetry->Tel_GetContext(PLUGIN_NAME);
-  if (core->keybinds)
-    if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) core->keybinds->Kbind_Register(keys, "Routes.toggle", OnToggleKey);
-  g_loaded = LoadRoutes(PluginDir() + "routes.tsv", g_data);
-  g_favorites = LoadFavorites(PluginDir() + "favorites.tsv");
-  g_supported = game::Supported();
-  Log(std::string("ativado: ") + std::to_string(g_data.cities.size()) + " cidades, " + std::to_string(g_data.cargo_names.size()) + " cargas; jogo " +
-      (g_supported ? "reconhecido" : "NÃO reconhecido") + ". F8 abre.");
-}
-
-void OnUnload() {
+// The DLL is going away: give the mouse back. Nothing here calls into the game.
+void Shutdown(bool) {
+  std::lock_guard lock(g_mu);
   if (g_core && g_core->ui && g_mouse_taken) {
-    SetMouseBlocked(g_core->ui, false);
+    g_api.SetMouseBlocked(false);
     g_core->ui->UI_SetMouseOverride(false);
   }
   g_mouse_taken = false;
-  g_core = nullptr;
-  g_log = nullptr;
-  g_tel = nullptr;
-  g_window = nullptr;
 }
 
 } // namespace
 
-extern "C" {
-
-SPF_PLUGIN_EXPORT bool SPF_GetManifestAPI(SPF_Manifest_API* out_api) {
-  if (!out_api) return false;
-  out_api->BuildManifest = BuildManifest;
+extern "C" __declspec(dllexport) bool Core_Init(const CoreApi* api, CoreExports* out) {
+  if (!api || !api->core || !api->core->ui || !api->SetMouseBlocked || !out) return false;
+  g_api = *api;
+  g_core = api->core;
+  g_log = api->log;
+  g_tel = api->tel;
+  g_window = g_core->ui->UI_GetWindowHandle(PLUGIN_NAME, "Planejador");
+  g_loaded = LoadRoutes(PluginDir() + "routes.tsv", g_data);
+  g_favorites = LoadFavorites(PluginDir() + "favorites.tsv");
+  g_supported = game::Supported();
+  Log("núcleo #" + std::to_string(api->reloads) + " (" __DATE__ " " __TIME__ "): " + std::to_string(g_data.cities.size()) + " cidades, " +
+      std::to_string(g_data.cargo_names.size()) + " cargas; jogo " + (g_supported ? "reconhecido" : "NÃO reconhecido") + ". F8 abre.");
+  *out = {Update, DrawPlanner, Key, Shutdown};
   return true;
 }
-
-SPF_PLUGIN_EXPORT bool SPF_GetPlugin(SPF_Plugin_Exports* exports) {
-  if (!exports) return false;
-  exports->OnLoad = OnLoad;
-  exports->OnActivated = OnActivated;
-  exports->OnUnload = OnUnload;
-  exports->OnUpdate = OnUpdate;
-  exports->OnRegisterUI = OnRegisterUI;
-  return true;
-}
-
-} // extern "C"
