@@ -279,3 +279,30 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 # ===== v2.3 (2026-10-02) =====
 - Usuário confirmou ("funcionou"): 7h + tempo limpo antes de criar o serviço. **v2.3.0**, tag `v2.3`,
   backup em `D:\Projetos\_backupsts2-routes2.3\` + `v2.3.zip`.
+
+## v2.4.0 (2026-10-04) — escolta policial, etapa 1 (spawn + seguir por velocidade). EXPERIMENTAL
+Pedido: 500 m depois de iniciar o serviço, carro de polícia do país com giroflex ligado seguindo
+atrás, na mesma velocidade.
+- **Comando `spawn` do console** (mesma tabela de g_set_time/goto/warp): handler 0x3f9df0, mensagens
+  "[spawn] Usage: spawn (object) [params]", "Supported objects: 'vehicle', 'event'". Monta um placement
+  a partir da câmera e chama **0x566960(traffic_mgr=[exe+0x36ae728], args*, placement*)**.
+  Sintaxe (0x566960): `spawn vehicle` (aleatório), `spawn vehicle <N>` (N veículos),
+  `spawn vehicle <nome> [cadeia de reboques]` → busca 0x938ed0, spawn 0x568120 (2ª tentativa
+  "Forced spawn!"), log "Successfully spawned '%s' near [...]" / "Unable to spawn '%s' ...".
+  Placement = f32 x,y,z locais + i16 setor x (+0xc) e z (+0xe) (setor = floor(mundo/512)) + quaternion.
+- **Polícia por país:** `def/country/<c>/traffic*.sii`, bloco sob o banner "police" (às vezes
+  "Police / State - Municipal, Border"), `object: traffic.<modelo>.pol_<c>`. Gerador grava na 4ª coluna
+  da linha N (35 de 36 países; Islândia sem mapa). Tipo `traffic.vehicle_type.police`
+  (traffic_storage_police.sii), `validation_groups: flares_emergency_min2max12`, `flares_beacon_none`.
+- `plugin/escort.h`: `Spawn` chama 0x566960 direto com placement 30 m atrás do caminhão (telemetria:
+  posição + heading 0..1) e args falsos {"spawn","vehicle",modelo}; `Find` acha o carro na lista de
+  tráfego pelo nome do modelo (+0x518) mais perto do ponto; `Follow` escreve o limite (+0x430) =
+  velocidade do caminhão + 0,4·(dist − 30 m) limitado a [−6, +10] m/s; perdido se sumir da lista,
+  > 300 m ou > 10 m À FRENTE → novo spawn após ~3 s. `Release` devolve o limite original.
+- País = o da cidade de ORIGEM (ainda não acompanha a troca de país no caminho).
+- **Pendente:** giroflex (campo desconhecido; "emergency lights"/"Beacons" no exe), seguir em
+  cruzamentos (a IA escolhe a própria rota → hoje só respawn), país atual.
+- Outras pistas: DLC Special Transport tem escolta traseira (`back_escort_speed`,
+  `back_escort_ws_position`, traffic_storage_escort_back.sii, flag "escort" = bit 8 de +0x4b8), mas
+  segue trajetórias pré-definidas por rota.
+- NÃO testado no jogo.

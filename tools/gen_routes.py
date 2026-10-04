@@ -4,7 +4,7 @@ Usage: gen_routes.py <extract_root> <out.tsv>
 <extract_root> holds one folder per archive (def/, dlc_east/, ...), each extracted with scs_extractor.
 
 Lines (tab-separated):
-  N country_token name
+  N country_token name police_model        (traffic vehicle the country uses as police, may be empty)
   C city_token name country_token
   P company_token company_name city_token     (company present in city)
   O company_token cargo_token                (company ships it)
@@ -40,7 +40,15 @@ def tr(text, fallback):
 countries, cities, companies, cargo = {}, {}, {}, {}
 spec, trailers = {}, []  # cargo -> (body types, unit mass, unit volume); single-trailer (body, volume, payload)
 place, ship, recv = set(), set(), set()
+police = {}  # country folder -> traffic vehicle name
 for d in defs:
+    # def/country/<c>/traffic*.sii: the block under the "police" banner lists the country's police cars
+    for f in d.glob("country/*/traffic*.sii"):
+        if "density" in f.name: continue
+        m = re.search(r"#+\s*police[^\n]*\n#+\s*\n(.*?)(?:\n#{10,}|\Z)", read(f), re.S | re.I)
+        objs = re.findall(r"object:\s*(traffic\.[\w.]+)", m.group(1)) if m else []
+        best = next((o for o in objs if ".pol_" in o and "_cus" not in o), objs[0] if objs else None)
+        if best: police.setdefault(f.parent.name, best)
     for f in d.glob("country/*.sui"):
         t = read(f)
         m = re.search(r"country\.data\.(\w+)", t)
@@ -78,7 +86,7 @@ def est_mass(c):
     loads = [min(int(tv // vol), int(pl // mass)) * mass for b, tv, pl in trailers if b in bodies and mass > 0 and vol > 0]
     return round(max(loads, default=0) or mass)
 
-lines = [f"N\t{k}\t{v}" for k, v in sorted(countries.items())]
+lines = [f"N\t{k}\t{v}\t{police.get(k, '')}" for k, v in sorted(countries.items())]
 lines += [f"C\t{k}\t{n}\t{c}" for k, (n, c) in sorted(cities.items()) if c in countries]
 lines += [f"P\t{co}\t{companies.get(co, co.upper())}\t{ci}" for co, ci in sorted(place) if ci in cities]
 lines += [f"O\t{co}\t{cg}" for co, cg in sorted(ship) if cg in cargo]

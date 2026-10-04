@@ -11,7 +11,7 @@
 #include <vector>
 
 struct Named {
-  std::string tok, name, parent; // parent: country of a city, city of a branch
+  std::string tok, name, parent; // parent: country of a city, city of a branch, police car model of a country
 };
 
 struct RouteData {
@@ -42,7 +42,7 @@ inline bool LoadRoutes(const std::string& path, RouteData& d) {
     const auto f = SplitTabs(line);
     if (f.size() < 3) continue;
     const char k = f[0][0];
-    if (k == 'N') d.countries.push_back({f[1], f[2], ""});
+    if (k == 'N') d.countries.push_back({f[1], f[2], f.size() >= 4 ? f[3] : ""});
     else if (k == 'C' && f.size() >= 4) d.cities.push_back({f[1], f[2], f[3]});
     else if (k == 'P' && f.size() >= 4) d.branches.push_back({f[1], f[2], f[3]});
     else if (k == 'O') d.ships.insert({f[1], f[2]});
