@@ -556,3 +556,22 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Limite conhecido: deslocado de faixa, a IA "pensa" que ainda está na faixa original (reage ao tráfego DELA).
   Troca de faixa lógica da IA (bits change_lane/lane_target de +0x4b8) não foi investigada.
 - NÃO testado no jogo. Primeira vez: "Recarregar Framework" (ou reiniciar) para a hospedeira nova entrar.
+
+## v2.7.1 (branch `escolta`, 2026-10-04) — faixa de volta ao contínuo; giroflex
+- Usuário: a regra de faixa da v2.7.0 (só quando a mais de 2,2 m) seguia pior → voltou a do v2.6.4 (puxar
+  continuamente entre 0,6 e 8 m). Recarga automática confirmada ("núcleo #2" entrou sozinho).
+  Lição: não mexer na versão do CMake a cada ajuste (ela está na hospedeira → força "Recarregar Framework").
+- **Giroflex — RE estático:**
+  - Regra `on_special` do DLC (tokens das regras aparecem como constantes em 0x6b4c50/0x6b5bb0): só vale para
+    veículo em modo escolta (bit 8); liga o bit 2 de [controlador+0x24] (controlador = 0x9245c0(veh, 8)); quem lê
+    é o gerente oversize (0x76d994, avisos de distância). NÃO é luz.
+  - Máscaras de luz (validação de veículos, 0x16bf898): 0x20 freio, 0x40 pisca esq., 0x80 pisca dir.,
+    0x200 beacon, 0x1000 e 0x2000 emergency (a barra de teto da polícia: tipo police tem
+    flares_emergency_min2max12 e flares_beacon_none).
+  - **Rotina de luzes do tráfego 0x92b420** (por veículo, por quadro): objeto de luzes em veh+0x210, virtual
+    +0x80 = "acender máscara", +0x88(0xffffffff) = apagar tudo (quando bit 37 engine_off). Acende 0x4000 e
+    0x200 SEMPRE, 0x20 (freio, conforme veh+0x450), 0x100 (veh+0xe8 & 1), 3 (faixa [veh+0x428] com +0x98 ≠ 0:
+    túnel/noite?), 0x40/0x80 pelos bits 50/51. Nunca 0x1000 → polícia do tráfego anda de teto apagado.
+- **Plugin:** `escort::LightsOn(car, 0x1000|0x2000)` chama o virtual +0x80 do objeto de luzes a cada quadro
+  (caixa "Giroflex ligado" no painel; para de tentar após 5 falhas). NÃO testado no jogo: pode piscar se o
+  jogo limpar a máscara depois do nosso quadro, ou não ter efeito se emergency depender de outra coisa.

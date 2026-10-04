@@ -195,6 +195,26 @@ inline bool Remove(const Car& c) {
   }
 }
 
+// ---- lights -------------------------------------------------------------------------------------
+// The traffic light routine (0x92b420, every frame for every AI car) drives the light object at
+// vehicle+0x210 through its virtual +0x80 "turn on these lights (mask)": 0x40 / 0x80 blinkers (from
+// flag bits 50 / 51), 0x20 brake, 0x200 beacon and 0x4000 always. Masks per group come from the
+// vehicle validation code (0x16bf898): 0x1000 and 0x2000 are the "emergency lights" - the roof bar of
+// police cars - which that routine never turns on. We ask for them ourselves, every frame.
+constexpr uint32_t LIGHTS_EMERGENCY = 0x1000 | 0x2000;
+
+inline bool LightsOn(const Car& c, uint32_t mask) {
+  if (!StillThere(c)) return false;
+  __try {
+    uint8_t* const lights = game::Ptr(c.ptr, 0x210);
+    if (!lights) return false;
+    (*reinterpret_cast<void (***)(void*, uint32_t)>(lights))[16](lights, mask);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // ---- junctions ----------------------------------------------------------------------------------
 struct Curve {
   uint8_t* item = nullptr;  // the junction curve under a position (never a plain road lane)

@@ -70,6 +70,8 @@ std::vector<EscortSlot> g_escort_slots = {{"Polícia", 30.0}};
 bool g_escort = true;           // call the escort by itself 250 m into a job started by the planner
 bool g_escort_supported = false;
 bool g_escort_active = false;   // the escort should exist right now (called by the job rule or by Home)
+bool g_escort_lights = true;    // roof lights on (escort::LightsOn)
+int g_escort_lights_failed = 0; // calls that faulted: after a few we stop asking
 bool g_escort_armed = false;    // a job we started is running
 bool g_escort_seen_job = false; // telemetry has reported that job (it lags the start by a few frames)
 float g_escort_from_km = 0;     // odometer when the job started
@@ -600,6 +602,8 @@ void UpdateEscort() {
         continue;
       }
       if (slot.place.on_trail) slot.hint = slot.place.behind;
+      if (g_escort_lights && g_escort_lights_failed < 5 && !escort::LightsOn(slot.car, escort::LIGHTS_EMERGENCY) && ++g_escort_lights_failed == 5)
+        Log("escolta: o jogo recusou ligar as luzes 5 vezes; giroflex desligado nesta sessão");
       // off our path (it took another road), in front of us, or hopelessly far: after 2.5 s like that it is replaced
       const bool astray = !slot.place.on_trail && (slot.place.lateral > 12.0 || slot.place.behind < 0);
       slot.astray = astray || slot.place.behind > 350.0 ? slot.astray + 1 : 0;
@@ -677,6 +681,8 @@ void DrawEscort(SPF_UI_API* ui, void*) {
   char line[256];
   if (!g_escort_supported) ui->UI_TextColored(0.9f, 0.3f, 0.25f, 1.0f, "Versão do jogo não reconhecida: escolta desligada.");
   ui->UI_Checkbox("Chamar sozinha 250 m após iniciar um serviço", &g_escort);
+  ui->UI_Checkbox("Giroflex ligado", &g_escort_lights);
+  if (g_escort_lights_failed >= 5) ui->UI_TextColored(0.95f, 0.4f, 0.3f, 1.0f, "O jogo recusou ligar as luzes (veja o log).");
   ui->UI_TextWrapped(("Situação: " + g_escort_note).c_str());
   std::snprintf(line, sizeof line, "Carros criados e ainda no mundo: %d", static_cast<int>(g_escort_all.size()));
   ui->UI_Text(line);
