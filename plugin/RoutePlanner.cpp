@@ -55,7 +55,12 @@ bool g_confirm_cancel = false;
 std::string g_status;
 bool g_status_error = false;
 
-enum class Pending { None, Start, Cancel, Teleport, Create };
+enum class Pending { None, Start, Cancel, Teleport, Create, Longest };
+
+enum class View { Planner, Favorites };
+View g_view = View::Planner;
+std::vector<Favorite> g_favorites;
+int g_editing = -1; // favourite being edited in the planner (-1 = none)
 Pending g_pending = Pending::None;
 
 void Log(const std::string& msg) {
@@ -136,6 +141,44 @@ void PlaceCombos(SPF_UI_API* ui, const char* id, Side& side) {
     }
     ui->UI_EndCombo();
   }
+}
+
+std::string CompanyLabel(const std::string& tok) {
+  for (const auto& b : g_data.branches)
+    if (b.tok == tok) return b.name;
+  return tok;
+}
+
+void SaveFavoritesFile() {
+  if (!SaveFavorites(PluginDir() + "favorites.tsv", g_favorites)) Log("não consegui gravar favorites.tsv");
+}
+
+Favorite SelectedRoute() {
+  const RouteOption& o = g_options[g_selected];
+  return {g_src.city, g_dst.city, o.cargo, o.src_company, o.dst_company};
+}
+
+// Puts cities into the planner (country filters follow them) without choosing a cargo.
+bool SetCities(const std::string& src_city, const std::string& dst_city) {
+  const Named* s = Find(g_data.cities, src_city);
+  const Named* d = Find(g_data.cities, dst_city);
+  if (!s || !d) return false;
+  g_src.country = s->parent, g_src.city = s->tok, g_src.filter[0] = 0;
+  g_dst.country = d->parent, g_dst.city = d->tok, g_dst.filter[0] = 0;
+  g_cargo_filter[0] = 0;
+  return true;
+}
+
+// Loads a favourite into the planner with its cargo selected. False if the data no longer has it.
+bool ApplyRoute(const Favorite& f) {
+  if (!SetCities(f.src_city, f.dst_city)) return false;
+  g_any_cargo = true; // the favourite may be an off-market pair
+  g_options = RouteOptions(g_data, g_src.city, g_dst.city, true);
+  g_options_for = g_src.city + "|" + g_dst.city + "|any";
+  g_selected = FindOption(g_options, f);
+  if (g_selected >= 0 && g_options[g_selected].cargo != f.cargo) g_selected = -1;
+  g_cargo_pending = g_supported && !g_options.empty(); // drops cargo the game doesn't know; keeps the selection
+  return g_selected >= 0;
 }
 
 void DrawCurrentJob(SPF_UI_API* ui) {
@@ -220,6 +263,92 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
   if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
+  ui->UI_BeginDisabled(g_selected < 0);
+  if (g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size())) {
+    if (ui->UI_Button("Salvar alterações na favorita", -1, 0)) {
+      g_favorites[g_editing] = SelectedRoute();
+      SaveFavoritesFile();
+      g_status = "Favorita atualizada.";
+      g_status_error = false;
+      g_editing = -1;
+      g_view = View::Favorites;
+    }
+  } else if (ui->UI_Button("Adicionar esta rota às favoritas", -1, 0)) {
+    const Favorite f = SelectedRoute();
+    const bool dup = std::find(g_favorites.begin(), g_favorites.end(), f) != g_favorites.end();
+    if (!dup) {
+      g_favorites.push_back(f);
+      SaveFavoritesFile();
+    }
+    g_status = dup ? "Essa rota já está nas favoritas." : "Rota adicionada às favoritas.";
+    g_status_error = false;
+  }
+  ui->UI_EndDisabled();
+  if (g_editing >= 0 && ui->UI_Button("Cancelar edição", -1, 0)) {
+    g_editing = -1;
+    g_view = View::Favorites;
+  }
+}
+
+// ---- favourites screen ----
+void DrawFavorites(SPF_UI_API* ui, bool on_job) {
+  ui->UI_SeparatorText("Rotas favoritas");
+  if (g_favorites.empty()) {
+    ui->UI_TextWrapped("Nenhuma favorita ainda. Em \"Planejar\", escolha origem, destino e carga e use \"Adicionar esta rota às favoritas\".");
+    return;
+  }
+  const bool can_start = !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
+  int remove = -1;
+  for (int i = 0; i < static_cast<int>(g_favorites.size()); ++i) {
+    const Favorite& f = g_favorites[i];
+    const std::string id = "##fav" + std::to_string(i);
+    ui->UI_Text((CityLabel(f.src_city) + "  →  " + CityLabel(f.dst_city)).c_str());
+    char mass[24];
+    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
+    ui->UI_TextDisabled((CargoName(g_data, f.cargo) + "  ·  " + mass + "  ·  " + CompanyLabel(f.src_company) + " → " + CompanyLabel(f.dst_company)).c_str());
+    ui->UI_BeginDisabled(!can_start);
+    if (ui->UI_Button(("Iniciar" + id).c_str(), 150, 0)) {
+      if (ApplyRoute(f)) g_pending = Pending::Start; // same path as the planner's button
+      else {
+        g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
+        g_status_error = true;
+      }
+    }
+    ui->UI_EndDisabled();
+    ui->UI_SameLine(0, -1);
+    if (ui->UI_Button(("Editar" + id).c_str(), 110, 0)) {
+      ApplyRoute(f);
+      g_editing = i;
+      g_view = View::Planner;
+    }
+    ui->UI_SameLine(0, -1);
+    if (ui->UI_Button(("Remover" + id).c_str(), 110, 0)) remove = i;
+    ui->UI_Separator();
+  }
+  if (remove >= 0) {
+    g_favorites.erase(g_favorites.begin() + remove);
+    SaveFavoritesFile();
+    g_editing = -1;
+    g_status = "Favorita removida.";
+    g_status_error = false;
+  }
+  if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
+}
+
+void DrawTopBar(SPF_UI_API* ui) {
+  const std::string favs = "Favoritas (" + std::to_string(g_favorites.size()) + ")";
+  const bool planner = g_view == View::Planner;
+  if (planner) ui->UI_PushStyleColor(SPF_COLOR_BUTTON, 0.85f, 0.62f, 0.15f, 0.55f);
+  if (ui->UI_Button("Planejar", 120, 0)) g_view = View::Planner;
+  if (planner) ui->UI_PopStyleColor(1);
+  ui->UI_SameLine(0, -1);
+  if (!planner) ui->UI_PushStyleColor(SPF_COLOR_BUTTON, 0.85f, 0.62f, 0.15f, 0.55f);
+  if (ui->UI_Button(favs.c_str(), 150, 0)) g_view = View::Favorites;
+  if (!planner) ui->UI_PopStyleColor(1);
+  ui->UI_SameLine(0, -1);
+  ui->UI_BeginDisabled(!g_supported || g_pending != Pending::None);
+  if (ui->UI_Button("Maior rota", 130, 0)) g_pending = Pending::Longest;
+  ui->UI_EndDisabled();
 }
 
 void DrawCursor(SPF_UI_API* ui) { // SPF only shows a cursor for its own windows
@@ -239,14 +368,20 @@ void Draw(SPF_UI_API* ui, void*) {
     ui->UI_TextWrapped("routes.tsv não encontrado ao lado da DLL. Rode o deploy.ps1 (ele gera o arquivo a partir dos dados do jogo).");
   } else {
     if (!g_supported) ui->UI_TextColored(0.9f, 0.3f, 0.25f, 1.0f, "Versão do jogo não reconhecida: iniciar/cancelar desligados.");
+    DrawTopBar(ui);
     DrawCurrentJob(ui);
-    ui->UI_SeparatorText("Origem");
-    PlaceCombos(ui, "src", g_src);
-    ui->UI_SeparatorText("Destino");
-    PlaceCombos(ui, "dst", g_dst);
     SPF_JobData jd{};
     if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-    DrawCargo(ui, jd.on_job);
+    if (g_view == View::Favorites) {
+      DrawFavorites(ui, jd.on_job);
+    } else {
+      if (g_editing >= 0) ui->UI_TextColored(0.95f, 0.75f, 0.3f, 1.0f, "Editando uma favorita: mude o que quiser e salve.");
+      ui->UI_SeparatorText("Origem");
+      PlaceCombos(ui, "src", g_src);
+      ui->UI_SeparatorText("Destino");
+      PlaceCombos(ui, "dst", g_dst);
+      DrawCargo(ui, jd.on_job);
+    }
   }
   if (!g_status.empty()) {
     ui->UI_Spacing();
@@ -263,7 +398,15 @@ void Draw(SPF_UI_API* ui, void*) {
 // Drop cargo the game doesn't know (mp_job_missing_cargo).
 void FilterUnknownCargo() {
   g_cargo_pending = false;
+  const bool had = g_selected >= 0 && g_selected < static_cast<int>(g_options.size());
+  const Favorite keep = had ? Favorite{g_src.city, g_dst.city, g_options[g_selected].cargo, g_options[g_selected].src_company,
+                                       g_options[g_selected].dst_company}
+                            : Favorite{};
   std::erase_if(g_options, [](const RouteOption& o) { return !game::CargoExists(Token(o.cargo.c_str())); });
+  if (had) {
+    g_selected = FindOption(g_options, keep);
+    if (g_selected >= 0 && g_options[g_selected].cargo != keep.cargo) g_selected = -1;
+  }
   Log("opções " + g_options_for + ": " + std::to_string(g_options.size()));
 }
 
@@ -300,6 +443,37 @@ void Teleport() {
     g_status = "Teleporte falhou (motivo no game.log.txt).";
     g_status_error = true;
   }
+}
+
+// Farthest two cities on the map: fills origin and destination and leaves the cargo to the player.
+void PickLongestRoute() {
+  std::vector<MapPoint> pts(g_data.cities.size());
+  for (size_t i = 0; i < g_data.cities.size(); ++i) {
+    for (const auto& b : g_data.branches) { // a city is where its first company the game knows is
+      if (b.parent != g_data.cities[i].tok) continue;
+      double c[3];
+      if (game::CompanyCenter(Token(b.tok.c_str()), Token(b.parent.c_str()), c)) {
+        pts[i] = {c[0], c[2], true};
+        break;
+      }
+    }
+  }
+  double metres = 0;
+  const auto ends = FarthestPair(pts, &metres);
+  if (ends.first < 0 || !SetCities(g_data.cities[ends.first].tok, g_data.cities[ends.second].tok)) {
+    g_status = "Não consegui achar as cidades no jogo (precisa estar com o mapa carregado).";
+    g_status_error = true;
+    return;
+  }
+  g_any_cargo = true; // every cargo the game knows, so there is always something to pick
+  g_editing = -1;
+  g_view = View::Planner;
+  char msg[256];
+  std::snprintf(msg, sizeof msg, "Maior rota: %s → %s, cerca de %.0f km. Escolha a carga e inicie.", CityLabel(g_src.city).c_str(),
+                CityLabel(g_dst.city).c_str(), game::MetersToFreightKm(metres));
+  g_status = msg;
+  g_status_error = false;
+  Log(g_status);
 }
 
 void RunPending() {
@@ -341,6 +515,8 @@ void RunPending() {
     if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
+  } else if (what == Pending::Longest) {
+    PickLongestRoute();
   } else if (what == Pending::Teleport) {
     Teleport();
   }
@@ -419,6 +595,7 @@ void OnActivated(const SPF_Core_API* core) {
   if (core->keybinds)
     if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) core->keybinds->Kbind_Register(keys, "Routes.toggle", OnToggleKey);
   g_loaded = LoadRoutes(PluginDir() + "routes.tsv", g_data);
+  g_favorites = LoadFavorites(PluginDir() + "favorites.tsv");
   g_supported = game::Supported();
   Log(std::string("ativado: ") + std::to_string(g_data.cities.size()) + " cidades, " + std::to_string(g_data.cargo_names.size()) + " cargas; jogo " +
       (g_supported ? "reconhecido" : "NÃO reconhecido") + ". F8 abre.");

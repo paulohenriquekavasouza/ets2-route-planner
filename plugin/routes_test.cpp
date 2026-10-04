@@ -22,6 +22,13 @@ int main() {
   const auto any = RouteOptions(d, "bremen", "berlin", true); // nobody in bremen ships anything
   assert(any.size() == 2 && any[0].off_market && any[0].src_company == "kaarfor" && any[0].dst_company == "tesco");
   assert(CargoMass(d, "apples") == 23000 && CargoMass(d, "beef") == 0); // mass column is optional
+  // favourites survive a save/load round trip, and find their option again
+  const std::vector<Favorite> favs = {{"berlin", "bremen", "beef", "tesco", "lisette"}, {"berlin", "bremen", "apples", "tesco", "nobody"}};
+  assert(SaveFavorites("fav_test.tsv", favs) && LoadFavorites("fav_test.tsv") == favs && LoadFavorites("missing.tsv").empty());
+  assert(FindOption(o, favs[0]) == 2 && FindOption(o, favs[1]) == 0 && FindOption(o, {"", "", "gold", "", ""}) == -1);
+  double far_m = 0;
+  const auto ends = FarthestPair({{0, 0, true}, {30, 40, true}, {1000, 1000, false}, {-3, -4, true}}, &far_m);
+  assert(ends.first == 1 && ends.second == 3 && std::abs(far_m - 55.0) < 1e-9 && FarthestPair({{1, 1, true}}, nullptr).first == -1);
   static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
   assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
   std::puts("routes_test ok");

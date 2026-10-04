@@ -291,3 +291,19 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   jogo ao recarregar o framework com um carro vivo (suspeita: chamada ao jogo dentro do OnUnload).
 - Restos no `spfPlugins\RoutePlanner\config\settings.json`: tecla `escort` e janela `Escolta` (o SPF
   regrava o arquivo com o jogo aberto; sem efeito na v2.3).
+
+## v2.4.0 (2026-10-04) — favoritas e maior rota (sobre a v2.3; a escolta segue na branch `escolta`)
+- Barra no topo da janela: **Planejar**, **Favoritas (n)**, **Maior rota** (sem tecla nova).
+- Favoritas: `favorites.tsv` ao lado da DLL (cidade origem, cidade destino, carga, empresa origem,
+  empresa destino; `LoadFavorites`/`SaveFavorites` em routes.h). Tela com Iniciar / Editar / Remover.
+  "Iniciar" carrega a rota no planejador (`ApplyRoute`) e usa o mesmo `Pending::Start` do botão
+  normal (7h + tempo limpo, criação, teleporte, freio). "Editar" abre o planejador com a rota
+  carregada e o botão vira "Salvar alterações na favorita". No planejador: "Adicionar esta rota às
+  favoritas" (rota = origem, destino e a carga selecionada; não duplica).
+- `FilterUnknownCargo` agora preserva a carga selecionada ao remover cargas que o jogo não conhece.
+- Maior rota: `game::CompanyCenter` (centro do item de mapa da 1ª empresa conhecida de cada cidade,
+  via 0x7d0df0) para as 384 cidades, `FarthestPair` (O(n²)), preenche países e cidades, liga
+  "Qualquer carga" e mostra a distância estimada (mesma conta do pagamento: linha reta × 19 × 1,2).
+  Roda no OnUpdate porque consulta o jogo.
+- Testes novos em routes_test: ida e volta das favoritas, `FindOption`, `FarthestPair`.
+- NÃO testado no jogo.
