@@ -49,6 +49,9 @@ bool g_refuel = true;         // fill the tank when the job starts
 bool g_morning = true;        // 07:00 and clear weather before the job is created (its deadline counts from then)
 int g_start_in = -1;          // frames until the job is created after the console commands (-1 = none)
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
+int g_hint_in = -1;           // frames until the "job started" message goes to the game's hint box
+int g_hint_off_in = -1;       // frames until it is taken down again
+std::string g_hint_title, g_hint_text;
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
 bool g_cargo_pending = false; // options still to be checked against the game's cargo list
@@ -565,6 +568,11 @@ void RunPending() {
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
+    if (ok) { // test of the game's own hint box: shown once the teleport and its parking brake hint are over
+      g_hint_title = "Serviço iniciado";
+      g_hint_text = CargoName(g_data, o.cargo) + "<br>" + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) + (g_refuel ? "<br>Tanque cheio" : "");
+      g_hint_in = 120;
+    }
     if (ok && g_refuel) {
       const float before = game::Refuel();
       Log(before < 0 ? std::string("abastecer: caminhão não reconhecido, nada feito") : "abastecido: tinha " + std::to_string(static_cast<int>(before)) + " L, tanque cheio");
@@ -602,6 +610,13 @@ void Update() {
     RunPending();
   }
   if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
+  if (g_hint_in >= 0 && g_hint_in-- == 0) {
+    const bool shown = game::ShowHint(g_hint_title.c_str(), g_hint_text.c_str());
+    Log(std::string("caixa de aviso do jogo: ") + (shown ? "mensagem enviada" : "não deu (fora da direção, painel ocupado ou jogo não reconhecido)"));
+    if (shown) g_hint_off_in = 600; // ~10 s
+  }
+  if (g_hint_off_in >= 0 && g_hint_off_in-- == 0)
+    Log(std::string("caixa de aviso do jogo: ") + (game::HideHint((g_hint_title + "|" + g_hint_text).c_str()) ? "mensagem retirada" : "já não era a nossa; nada feito"));
   if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) {
     Log("1 s depois do teleporte: caminhão em " + TruckPos());
     if (g_release_brake) ReleaseBrake("1 s depois"); // the game may engage it again once the truck settles

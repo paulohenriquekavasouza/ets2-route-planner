@@ -388,3 +388,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - O texto aceita a marcação do jogo: `<br>`, `<color value=@@clr_sel@@>…`, chaves `@@…@@`; a tecla vem de `$KEY$` substituído antes (0xf3f20).
 - Não verificado: de onde vem o ícone (P), acentos (o jogo usa UTF-8), se a caixa some sozinha, e a disputa com os avisos
   do próprio jogo (cada aviso dele sobrescreve a mesma string). Chamar só na thread do jogo (Update do plugin), com SEH e conferência do prólogo.
+- **Teste (após a v2.5.1, sem tag):** `game::ShowHint/HideHint`; ao iniciar um serviço, 2 s depois vai "Serviço iniciado | carga<br>origem → destino<br>Tanque cheio" para a caixa e é retirada após ~10 s (só se ainda for a nossa: compara com `adv+0xf20`). Reabastecimento da v2.5.1 confirmado em jogo.

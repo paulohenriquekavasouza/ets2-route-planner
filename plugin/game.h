@@ -338,6 +338,47 @@ inline float Refuel() {
   }
 }
 
+// The route adviser's hint box (the one that says "Freio de mão acionado!"). The game fills it with
+// 0xa63920(hud, char** title, char** text): "title|text" goes to the string at adv+0xf18 and adv+0xf38 = 1,
+// hud = [[[exe+0x36ae6d8]+0x2b30]+0xb0], adv = [[hud+0x50]+0x340]. An empty title hides the box. Like the
+// game, only while driving ([[owner+0x2b30]+0x210] in 3..5) and with adv+0xf39 clear. Text takes the game's
+// markup (<br>, <color value=@@clr_sel@@>, @@keys@@), UTF-8. Call from the game thread only.
+constexpr uintptr_t HINT_SHOW = 0xa63920;
+constexpr unsigned char kHintSig[10] = {0x40, 0x53, 0x48, 0x81, 0xec, 0x40, 0x04, 0x00, 0x00, 0x48};
+inline uint8_t* HintPanel(uint8_t** hud_out) {
+  uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+  uint8_t* const ui = owner ? Ptr(owner, 0x2b30) : nullptr;
+  if (!ui || ui[0x210] < 3 || ui[0x210] > 5) return nullptr;
+  uint8_t* const hud = Ptr(ui, 0xb0);
+  uint8_t* const holder = hud ? Ptr(hud, 0x50) : nullptr;
+  uint8_t* const adv = holder ? Ptr(holder, 0x340) : nullptr;
+  if (adv && hud_out) *hud_out = hud;
+  return adv;
+}
+inline bool ShowHint(const char* title, const char* text) {
+  if (std::memcmp(At<const void*>(HINT_SHOW), kHintSig, sizeof kHintSig) != 0) return false;
+  __try {
+    uint8_t* hud = nullptr;
+    uint8_t* const adv = HintPanel(&hud);
+    if (!adv || adv[0xf39]) return false;
+    At<void (*)(void*, const char**, const char**)>(HINT_SHOW)(hud, &title, &text);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+// Hides the box, but only if it still shows `shown` ("title|text"): the game's own hints use the same box.
+inline bool HideHint(const char* shown) {
+  __try {
+    uint8_t* const adv = HintPanel(nullptr);
+    const char* const now = adv ? *reinterpret_cast<const char* const*>(adv + 0xf20) : nullptr;
+    if (!now || std::strcmp(now, shown) != 0) return false;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+  return ShowHint("", "");
+}
+
 inline bool CancelJob() {
   __try {
     uint8_t* const ctrl = *At<uint8_t**>(CTRL);
