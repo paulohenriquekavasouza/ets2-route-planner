@@ -605,3 +605,13 @@ Não testado em jogo ainda (jogo fechado na hora).
   NÃO foi achado em que momento a IA escolhe a saída (se escolher antes de o caminhão entrar na curva, ainda erra).
 - Limite conhecido: só é forçada a entrada da faixa em que o caminhão passou; viatura logicamente em outra faixa
   de entrada (pista múltipla) ainda escolhe sozinha. Não testado em jogo.
+
+## escolta: uma só saída forçada por entrada (2026-10-04, núcleo)
+- Teste: num "T" o caminhão virou à direita e a viatura foi para a esquerda. Log: 6 curvas forçadas em 4 s na travessia.
+- **Causa:** no começo do T as saídas (direita/esquerda) ainda estão sobrepostas e `CurveAt` devolve qualquer uma;
+  as duas acabavam forçadas. Semântica de 0x94d090 (desmontada): on = bit 6 na curva + bit 7 nas irmãs (lista vinda
+  de curva.vt[0x88] → nó.vt[0x80], entradas de 16 bytes), sem limpar bit 6 das irmãs; off = limpa bit 6 e, se
+  nenhuma irmã tem bit 6, limpa o bit 7 de todas (senão a própria curva ganha bit 7). Duas irmãs com bit 6 → a IA escolhe qualquer uma.
+- **Correção:** ao forçar uma curva nova, toda curva nossa que ficou com bit 7 (`escort::Blocked`) é irmã dela →
+  solta; depois off/on na nova para limpar as marcas. Vale a mais nova (a que seguimos depois que as saídas se separam).
+- Ainda desconhecido: em que momento a IA escolhe a saída. Não testado em jogo.

@@ -617,6 +617,20 @@ void UpdateEscort() {
     const auto known = std::find_if(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
     if (known != g_escort_forced.end()) known->at_m = g_escort_travel; // still on it: the count to its release starts when we leave
     else if (g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
+      // One forced exit per entry. Where two exits still overlap (the start of a T) the lookup may return
+      // the other one first; with both forced the AI picks either (the car went left when we went right).
+      // 0x94d090 marks the siblings of a forced curve as blocked (bit 7), which is how we recognise ours:
+      // the newest wins, since it is the one we are on after the exits have parted.
+      const size_t dropped = std::erase_if(g_escort_forced, [&](const ForcedCurve& f) {
+        if (!escort::Blocked(f.curve)) return false;
+        escort::ForceCurve(f.curve, false);
+        return true;
+      });
+      if (dropped) { // the old curve left `here` blocked: off (clears every mark of this entry) and on again
+        escort::ForceCurve(here, false);
+        escort::ForceCurve(here, true);
+        Log("escolta: cruzamento, " + std::to_string(dropped) + " curva(s) da mesma entrada solta(s): vale a mais nova");
+      }
       g_escort_forced.push_back({here, g_escort_travel});
       std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada (%d ativas)", static_cast<void*>(here.item), static_cast<int>(g_escort_forced.size()));
       Log(line);

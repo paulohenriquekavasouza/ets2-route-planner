@@ -300,6 +300,15 @@ inline bool ForceCurve(const Curve& c, bool on) {
   }
 }
 
+// Bit 7 of curve+0x74: a sibling of this curve (same entry, another exit) is forced.
+inline bool Blocked(const Curve& c) {
+  __try {
+    return (*reinterpret_cast<const uint32_t*>(c.item + 0x74) & 0x80) != 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // ---- following the truck's own path ------------------------------------------------------------
 // The car stays an ordinary AI car (it steers, its wheels turn, the physics is the game's). What we
 // add is the escort's brain, like the Special Transport controller: where the car is relative to the
