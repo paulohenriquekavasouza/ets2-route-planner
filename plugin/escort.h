@@ -27,8 +27,7 @@ constexpr uint64_t FLAG_REMOVE = 1ull << 24;
 // `spawn vehicle` creates the car with bit 63 (debug_pause) set: it stands still until cleared.
 constexpr uint64_t FLAG_DEBUG_PAUSE = 1ull << 63;
 
-constexpr double SPAWN_BEHIND = 45.0; // m behind the truck's origin (truck + trailer are ~17 m)
-constexpr double GAP = 30.0;          // m behind the truck along its trail
+constexpr double MIN_BEHIND = 18.0;   // m: a truck with its trailer is ~17 m long, so nearer than this is on top of us
 
 struct Vec {
   double x = 0, y = 0, z = 0;
@@ -179,24 +178,30 @@ inline bool Remove(const Car& c) {
 }
 
 // ---- following the truck's own path ------------------------------------------------------------
-// An AI car picks its own way at every junction, so steering only its speed cannot make it follow.
-// Instead we record where the truck drove and carry the car along that trail, a fixed distance
-// behind. Live RE (MODLOG v2.5): near the player the car is a physics body and the game recomputes
-// vehicle+0x28 from it every tick, so the body is what we write:
-//   phys = [veh+0x238] (active when byte +0x1c & 1), A = [phys+0x20], B = [A+0xf8] (the rigid body)
-//   B+0x140 quaternion (x,y,z,w), B+0x150 position, B+0x15c linear velocity, B+0x168 angular velocity
-//   A+0x12c position, A+0x13c quaternion (w,x,y,z)        (B+0xa0 / A+0x10c are previous-step copies)
-// Body positions use the physics origin, not world coordinates, so we move the body by the same
-// delta that takes the vehicle's world position to the target. Height is left to the physics.
+// The car stays an ordinary AI car (it steers, its wheels turn, the physics is the game's). What we
+// add is the escort's brain, like the Special Transport controller: where the car is relative to the
+// trail the truck left, and how fast it should go to hold its place behind us.
+//
+// What does NOT work (MODLOG v2.6): writing the car's physics body (A=[phys+0x20] +0x12c, B=[A+0xf8]
+// +0x150) only sticks while the body is asleep (car stopped); with the car moving the physics engine
+// overwrites it every step, so the car cannot be dragged along the trail.
+// What works (ets2-police): the speed limit (+0x430, never recomputed by the game; negative = "no
+// limit") and, for cars with an active physics object, the speed itself (phys+0x70 and +0xe8).
 
 struct Sample {
   Vec p;
-  double heading = 0, pitch = 0; // SCS turns: heading 0..1, pitch +-0.25
+  double heading = 0; // SCS turns, 0..1
+};
+
+struct Projection {
+  double behind = 0;  // m along the trail from the car's nearest trail point to the trail's newest point
+  double lateral = 0; // m between the car and that nearest point
+  double heading = 0; // the truck's heading when it passed there
 };
 
 struct Trail {
   std::deque<Sample> pts; // oldest first
-  static constexpr double STEP = 1.0, KEEP = 250.0;
+  static constexpr double STEP = 1.0, KEEP = 400.0;
 
   void Add(const Sample& s) {
     if (!pts.empty()) {
@@ -208,6 +213,8 @@ struct Trail {
     pts.push_back(s);
     while (pts.size() > static_cast<size_t>(KEEP / STEP)) pts.pop_front();
   }
+
+  double Length() const { return pts.size() < 2 ? 0 : (pts.size() - 1) * STEP; } // points are ~STEP apart
 
   // The point `behind` metres back along the trail from its newest point. False if the trail is shorter.
   bool At(double behind, Sample* out) const {
@@ -226,68 +233,107 @@ struct Trail {
     }
     return false;
   }
+
+  // Where `p` is relative to the trail. False while the trail has fewer than two points.
+  bool Project(const Vec& p, Projection* out) const {
+    if (pts.size() < 2) return false;
+    size_t best = 0;
+    double best_d2 = 1e30;
+    for (size_t i = 0; i < pts.size(); ++i) {
+      const double dx = pts[i].p.x - p.x, dz = pts[i].p.z - p.z, d2 = dx * dx + dz * dz;
+      if (d2 < best_d2) best_d2 = d2, best = i;
+    }
+    double behind = 0;
+    for (size_t i = best; i + 1 < pts.size(); ++i) {
+      const double dx = pts[i + 1].p.x - pts[i].p.x, dz = pts[i + 1].p.z - pts[i].p.z;
+      behind += std::sqrt(dx * dx + dz * dz);
+    }
+    *out = {behind, std::sqrt(best_d2), pts[best].heading};
+    return true;
+  }
 };
 
-// Quaternion (w,x,y,z) for an SCS heading and pitch: yaw about +Y, then pitch about the local X.
-inline void Orientation(double heading, double pitch, float q[4]) {
-  const double y = heading * 3.141592653589793, p = pitch * 3.141592653589793; // half angles
-  const double cy = std::cos(y), sy = std::sin(y), cp = std::cos(p), sp = std::sin(p);
-  q[0] = static_cast<float>(cy * cp);
-  q[1] = static_cast<float>(cy * sp);
-  q[2] = static_cast<float>(sy * cp);
-  q[3] = static_cast<float>(-sy * sp);
+// The escort's speed: ours, plus a correction that closes or opens the distance to its place.
+// Far behind it speeds up to catch up (up to +12 m/s over us), too close it backs off (down to
+// -8 m/s), and when we are stopped it stops once it is about in place.
+inline float WantSpeed(double truck_speed, double gap, double gap_target) {
+  const double v = std::max(0.0, truck_speed), err = gap - gap_target;
+  if (v < 0.5 && err < 3.0) return 0.0f;
+  return static_cast<float>(std::clamp(v + std::clamp(err * 0.35, -8.0, 12.0), 0.0, 42.0));
 }
 
-enum class State { Following, Lost };
+// How good a place is for an escort car, on the trail (or relative to the truck while there is no
+// trail yet): behind us, in our lane, facing our way.
+struct Place {
+  double behind = 0;   // m behind the truck (negative = ahead of it)
+  double lateral = 0;  // m off our path
+  double facing = 0;   // 1 = same direction as us there, -1 = oncoming
+  bool on_trail = false;
+  bool Good(double min_behind) const { return behind >= min_behind && lateral <= 2.5 && facing >= 0.7; }
+};
 
-constexpr double MAX_PULL = 1.5;   // m per frame the car may be moved towards its place on the trail
-constexpr double DRAG_LIMIT = 80.0; // farther than this from its place = lost
+inline Place Locate(const Trail& trail, const Vec& truck, double truck_heading, const Vec& car, const Vec& car_forward) {
+  Place pl;
+  Projection pr;
+  // on the trail if it is near it and not at its very tip (the tip also catches cars in front of us)
+  if (trail.Project(car, &pr) && pr.lateral <= 12.0 && pr.behind >= 2.0) {
+    const Vec f = Forward(pr.heading);
+    pl = {pr.behind, pr.lateral, car_forward.x * f.x + car_forward.z * f.z, true};
+  } else {
+    const Vec f = Forward(truck_heading);
+    const double dx = car.x - truck.x, dz = car.z - truck.z;
+    pl = {-(dx * f.x + dz * f.z), std::abs(dx * f.z - dz * f.x), car_forward.x * f.x + car_forward.z * f.z, false};
+  }
+  return pl;
+}
 
-// One frame: put the car at `target` (a trail point) moving at `speed` m/s. `off` gets how far it
-// was from its place. Returns Lost if it is gone, too far, or has no physics body to move.
-inline State Drive(const Car& c, const Sample& target, double speed, double* off) {
-  if (!StillThere(c)) return State::Lost;
+// Forward vector of a traffic vehicle (quaternion w,x,y,z at +0x38, forward = -Z).
+inline Vec CarForward(const uint8_t* v) {
+  const float* q = reinterpret_cast<const float*>(v + 0x38);
+  const double w = q[0], x = q[1], y = q[2], z = q[3];
+  return {-(2 * (x * z + w * y)), 0, -(1 - 2 * (x * x + y * y))};
+}
+
+constexpr uint64_t FLAG_ALLOW_OVERTAKE = 1ull << 20;
+constexpr float HOLD_LIMIT = 0.001f; // "stand still"; 0 or negative would mean "no limit"
+
+// One frame of escorting. Fills `place` (where the car is) and `want` (the speed asked of it).
+// False if the car is gone from traffic.
+inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, double truck_speed, double gap_target, double dt,
+                  Place* place, float* want) {
+  if (!StillThere(c)) return false;
   __try {
+    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr));
+    *want = WantSpeed(truck_speed, place->behind, gap_target);
     uint64_t* flags = reinterpret_cast<uint64_t*>(c.ptr + 0x4b8);
-    *flags &= ~FLAG_DEBUG_PAUSE; // spawned paused; let it live
-    *reinterpret_cast<float*>(c.ptr + 0x430) = static_cast<float>(speed); // keep the AI's own idea of speed in step
-    const Vec at = Position(c.ptr);
-    double dx = target.p.x - at.x, dz = target.p.z - at.z;
-    const double d = std::sqrt(dx * dx + dz * dz);
-    *off = d;
-    if (d > DRAG_LIMIT) return State::Lost;
+    *flags &= ~(FLAG_DEBUG_PAUSE | FLAG_ALLOW_OVERTAKE); // spawned paused; and an escort does not overtake us
+    *reinterpret_cast<float*>(c.ptr + 0x430) = std::max(*want, HOLD_LIMIT);
+    // The AI only accelerates ~1 m/s^2 on its own; nudge the real speed so it catches up and brakes like an escort.
     uint8_t* const phys = game::Ptr(c.ptr, 0x238);
-    if (!phys || !(phys[0x1c] & 1)) return State::Following; // no body yet (far away): the AI drives it
-    uint8_t* const a = game::Ptr(phys, 0x20);
-    uint8_t* const b = a ? game::Ptr(a, 0xf8) : nullptr;
-    if (!b) return State::Following;
-    if (d > MAX_PULL) dx *= MAX_PULL / d, dz *= MAX_PULL / d;
-    float* bp = reinterpret_cast<float*>(b + 0x150);
-    float* ap = reinterpret_cast<float*>(a + 0x12c);
-    bp[0] += static_cast<float>(dx), bp[2] += static_cast<float>(dz);
-    ap[0] += static_cast<float>(dx), ap[2] += static_cast<float>(dz);
-    float q[4];
-    Orientation(target.heading, target.pitch, q);
-    float* bq = reinterpret_cast<float*>(b + 0x140); // x, y, z, w
-    bq[0] = q[1], bq[1] = q[2], bq[2] = q[3], bq[3] = q[0];
-    std::memcpy(a + 0x13c, q, sizeof q); // w, x, y, z
-    const Vec f = Forward(target.heading);
-    float* v = reinterpret_cast<float*>(b + 0x15c);
-    v[0] = static_cast<float>(f.x * speed), v[2] = static_cast<float>(f.z * speed);
-    float* w = reinterpret_cast<float*>(b + 0x168);
-    w[0] = w[1] = w[2] = 0;
-    return State::Following;
+    if (phys && (phys[0x1c] & 1)) {
+      const float cur = *reinterpret_cast<const float*>(phys + 0x70);
+      float next = cur;
+      if (cur < *want - 1.5f) next = std::min(*want, cur + static_cast<float>(3.0 * dt));
+      else if (cur > *want + 1.5f) next = std::max(*want, cur - static_cast<float>(6.0 * dt));
+      if (next != cur) {
+        *reinterpret_cast<float*>(phys + 0x70) = next;
+        *reinterpret_cast<float*>(phys + 0xe8) = next;
+      }
+    }
+    return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return State::Lost;
+    return false;
   }
 }
 
-// Give the car back to the game's own speed limit (it is never recomputed otherwise).
-inline void Release(const Car& c) {
-  if (!StillThere(c)) return;
+// Where a car that was just spawned ended up (to accept or reject it). False if it is gone.
+inline bool LocateCar(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, Place* place) {
+  if (!StillThere(c)) return false;
   __try {
-    *reinterpret_cast<float*>(c.ptr + 0x430) = c.saved_limit;
+    *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr));
+    return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
   }
 }
 

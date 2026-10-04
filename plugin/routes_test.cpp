@@ -25,18 +25,27 @@ int main() {
   assert(CargoMass(d, "apples") == 23000 && CargoMass(d, "beef") == 0); // mass column is optional
   assert(d.countries[0].parent == "traffic.passat_cc.pol_de");
   assert(std::abs(escort::Forward(0.25).x + 1.0) < 1e-9 && std::abs(escort::Forward(0).z + 1.0) < 1e-9);
-  // trail: straight 40 m north then a point 10 m west; 30 m back from the end is on the first leg
+  // trail: 40 m north, then 10 m west
   escort::Trail trail;
-  for (int i = 0; i <= 40; ++i) trail.Add({{0, 0, -double(i)}, 0, 0});
-  for (int i = 1; i <= 10; ++i) trail.Add({{-double(i), 0, -40}, 0.25, 0});
+  for (int i = 0; i <= 40; ++i) trail.Add({{0, 0, -double(i)}, 0});
+  for (int i = 1; i <= 10; ++i) trail.Add({{-double(i), 0, -40}, 0.25});
   escort::Sample at;
   assert(trail.At(30, &at) && std::abs(at.p.x) < 1e-9 && std::abs(at.p.z + 20) < 1e-9 && at.heading == 0);
   assert(trail.At(5, &at) && std::abs(at.p.x + 5) < 1e-9 && at.heading == 0.25 && !trail.At(60, &at));
-  trail.Add({{5000, 0, 5000}, 0, 0}); // teleport drops the old trail
+  escort::Projection pr;
+  assert(trail.Project({1.5, 0, -20}, &pr) && std::abs(pr.behind - 30) < 1e-9 && std::abs(pr.lateral - 1.5) < 1e-9 && pr.heading == 0);
+  // a car 30 m back in our lane facing our way is a good place; the next lane, oncoming, or in front of us is not
+  const escort::Vec truck{-10, 0, -40}, north{0, 0, -1}, south{0, 0, 1};
+  assert(escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, north).Good(escort::MIN_BEHIND));
+  assert(!escort::Locate(trail, truck, 0.25, {4.0, 0, -20}, north).Good(escort::MIN_BEHIND)); // 4 m aside = next lane
+  assert(!escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south).Good(escort::MIN_BEHIND)); // oncoming
+  const escort::Place front = escort::Locate(trail, truck, 0.25, {-25, 0, -40}, escort::Forward(0.25));
+  assert(!front.on_trail && front.behind < -10 && !front.Good(escort::MIN_BEHIND)); // 15 m ahead of the truck
+  // speed: ours at the right distance, faster when far, slower when close, stopped behind a stopped truck, never negative
+  assert(escort::WantSpeed(20, 30, 30) == 20.0f && escort::WantSpeed(20, 200, 30) == 32.0f && escort::WantSpeed(20, 10, 30) == 13.0f);
+  assert(escort::WantSpeed(-0.0, 31, 30) == 0.0f && escort::WantSpeed(0, 80, 30) == 12.0f && escort::WantSpeed(-3, 0, 30) == 0.0f);
+  trail.Add({{5000, 0, 5000}, 0}); // teleport drops the old trail
   assert(trail.pts.size() == 1);
-  float q[4];
-  escort::Orientation(0.25, 0, q); // 90 degrees left about +Y
-  assert(std::abs(q[0] - 0.70710678f) < 1e-5 && std::abs(q[2] - 0.70710678f) < 1e-5 && q[1] == 0 && q[3] == 0);
   // favourites survive a save/load round trip, and find their option again
   const std::vector<Favorite> favs = {{"berlin", "bremen", "beef", "tesco", "lisette"}, {"berlin", "bremen", "apples", "tesco", "nobody"}};
   assert(SaveFavorites("fav_test.tsv", favs) && LoadFavorites("fav_test.tsv") == favs && LoadFavorites("missing.tsv").empty());

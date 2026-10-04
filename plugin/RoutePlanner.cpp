@@ -55,8 +55,11 @@ struct EscortSlot {
   escort::Car car;
   bool requested = false; // spawn asked; look the car up when `wait` runs out
   int wait = 0;           // frames until the next spawn attempt / lookup
+  int attempt = 0;        // spawns tried for the current car: each one a little farther back
+  int astray = 0;         // frames in a row the car has been off our path or in front of us
   escort::Vec spawn_at;
-  double off = 0;         // m between the car and its place on the trail
+  escort::Place place;    // where the car is relative to our trail
+  float want = 0;         // m/s asked of it
   std::string note = "sem carro";
 };
 std::vector<EscortSlot> g_escort_slots = {{"Polícia", 30.0}};
@@ -489,7 +492,7 @@ int RemoveEscortCars() {
   for (auto& slot : g_escort_slots) {
     slot.car = {};
     slot.requested = false;
-    slot.wait = 0;
+    slot.wait = slot.attempt = slot.astray = 0;
     slot.note = "sem carro";
   }
   return n;
@@ -524,6 +527,16 @@ void CallEscort(const escort::Vec& truck) {
   Log("escolta: " + g_escort_note + (police.empty() ? "" : " (" + police + ")"));
 }
 
+void DropCar(EscortSlot& slot, const std::string& why, int wait) {
+  escort::Remove(slot.car);
+  std::erase_if(g_escort_all, [&](const escort::Car& c) { return c.ptr == slot.car.ptr; });
+  slot.car = {};
+  slot.astray = 0;
+  slot.note = why;
+  slot.wait = wait;
+  Log(std::string("escolta (") + slot.label + "): " + why);
+}
+
 void UpdateEscort() {
   if (!g_tel || !g_escort_supported) return;
   SPF_JobData jd{};
@@ -531,7 +544,8 @@ void UpdateEscort() {
   SPF_TruckData td{};
   g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
   const escort::Vec truck{td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z};
-  const double heading = td.world_placement.orientation.heading, pitch = td.world_placement.orientation.pitch;
+  const double heading = td.world_placement.orientation.heading;
+  const double dt = std::clamp(static_cast<double>(g_core->ui->UI_GetDeltaTime()), 0.001, 0.1);
   char line[256];
 
   if (g_escort_armed) {
@@ -547,56 +561,76 @@ void UpdateEscort() {
   if (g_escort_call.exchange(false)) CallEscort(truck); // Home, or the panel's button
   else if (g_escort && g_escort_armed && g_escort_seen_job && !g_escort_active && td.odometer - g_escort_from_km >= 0.25f && td.speed >= 3.0f)
     CallEscort(truck); // 250 m into the job, and moving
+  g_escort_trail.Add({truck, heading}); // always: a trail already there lets the first car be born in our lane
   if (!g_escort_active) return;
 
-  g_escort_trail.Add({truck, heading, pitch});
-  // a car's place: `behind` metres back along the trail (or straight behind while the trail is short)
-  auto place = [&](double behind) {
-    escort::Sample at;
-    if (!g_escort_trail.At(behind, &at)) {
-      const escort::Vec f = escort::Forward(heading);
-      at = {{truck.x - f.x * behind, truck.y, truck.z - f.z * behind}, heading, pitch};
-    }
-    return at;
-  };
   for (auto& slot : g_escort_slots) {
     if (slot.car.ptr) {
-      if (escort::Drive(slot.car, place(slot.gap), td.speed, &slot.off) == escort::State::Lost) {
-        std::snprintf(line, sizeof line, "escolta (%s): perdida a %.0f m do lugar dela, carro excluído", slot.label, slot.off);
-        Log(line);
-        escort::Remove(slot.car);
-        std::erase_if(g_escort_all, [&](const escort::Car& c) { return c.ptr == slot.car.ptr; });
-        slot.car = {};
-        slot.note = "carro perdido; outro em instantes";
-        slot.wait = 120;
-      } else {
-        slot.note = "seguindo";
+      if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, &slot.place, &slot.want)) {
+        DropCar(slot, "o carro sumiu do tráfego; outro em instantes", 60);
+        continue;
       }
+      // off our path (it took another road), in front of us, or hopelessly far: after 2.5 s like that it is replaced
+      const bool astray = !slot.place.on_trail && (slot.place.lateral > 12.0 || slot.place.behind < 0);
+      slot.astray = astray || slot.place.behind > 350.0 ? slot.astray + 1 : 0;
+      if (slot.astray > 150) {
+        std::snprintf(line, sizeof line, "saiu do nosso caminho (%.0f m atrás, %.0f m de lado); outro em instantes", slot.place.behind, slot.place.lateral);
+        DropCar(slot, line, 30);
+        continue;
+      }
+      slot.note = slot.place.behind > slot.gap + 15 ? "alcançando" : slot.want == 0 ? "parado atrás de você" : "no lugar";
       continue;
     }
     if (slot.wait > 0 && --slot.wait > 0) continue;
-    if (slot.requested) { // the car asked for a moment ago should be in the traffic list now
+    if (slot.requested) { // the car asked for a moment ago should be in the traffic list now: is it where we want it?
       slot.requested = false;
       slot.car = escort::Find(slot.model.c_str(), slot.spawn_at, 150.0);
-      if (slot.car.ptr) g_escort_all.push_back(slot.car);
-      else slot.wait = 300;
-      slot.note = slot.car.ptr ? "seguindo" : "o carro não apareceu no tráfego";
-      Log(std::string("escolta (") + slot.label + "): " + slot.note);
+      escort::Place born;
+      if (!slot.car.ptr || !escort::LocateCar(slot.car, g_escort_trail, truck, heading, &born)) {
+        slot.car = {};
+        slot.note = "o carro não apareceu no tráfego";
+        slot.wait = 120;
+        ++slot.attempt;
+        Log(std::string("escolta (") + slot.label + "): " + slot.note);
+        continue;
+      }
+      g_escort_all.push_back(slot.car);
+      if (!born.Good(escort::MIN_BEHIND)) { // in front of us, another lane, or oncoming: not an escort
+        std::snprintf(line, sizeof line, "nasceu no lugar errado (%.0f m atrás, %.0f m de lado, sentido %.1f); tentando mais atrás", born.behind,
+                      born.lateral, born.facing);
+        ++slot.attempt;
+        DropCar(slot, line, 15);
+        continue;
+      }
+      std::snprintf(line, sizeof line, "escolta (%s): carro aceito, %.0f m atrás, %.1f m de lado", slot.label, born.behind, born.lateral);
+      Log(line);
+      slot.attempt = 0;
+      slot.note = "no lugar";
       continue;
     }
-    const escort::Sample born = place(slot.gap + 15.0); // a little farther back, on the road we just drove
+    // Ask for the car on the road we just drove, behind its place; each failed try goes 10 m farther back.
+    const double behind = slot.gap + 10.0 + 10.0 * (slot.attempt % 6);
+    escort::Sample born;
+    if (!g_escort_trail.At(behind, &born)) { // no trail that long yet: straight behind the truck
+      const escort::Vec f = escort::Forward(heading);
+      born = {{truck.x - f.x * behind, truck.y, truck.z - f.z * behind}, heading};
+    }
     slot.spawn_at = born.p;
     const bool ok = escort::Spawn(slot.model.c_str(), slot.spawn_at, born.heading);
-    std::snprintf(line, sizeof line, "escolta (%s): spawn %s em [%.1f; %.1f; %.1f]: %s", slot.label, slot.model.c_str(), slot.spawn_at.x,
-                  slot.spawn_at.y, slot.spawn_at.z, ok ? "ok" : "falhou (motivo no game.log.txt)");
+    std::snprintf(line, sizeof line, "escolta (%s): spawn %s a %.0f m atrás [%.1f; %.1f; %.1f]: %s", slot.label, slot.model.c_str(), behind,
+                  slot.spawn_at.x, slot.spawn_at.y, slot.spawn_at.z, ok ? "ok" : "falhou (motivo no game.log.txt)");
     Log(line);
     slot.note = ok ? "carro pedido ao jogo" : "o jogo recusou o spawn aqui; nova tentativa em instantes";
     slot.requested = ok;
-    slot.wait = ok ? 5 : 300;
+    slot.wait = ok ? 5 : 180;
+    if (!ok) ++slot.attempt;
   }
-  if (++g_escort_log % 600 == 0) {
+  if (++g_escort_log % 300 == 0) {
     for (const auto& slot : g_escort_slots) {
-      std::snprintf(line, sizeof line, "escolta (%s): %s, desvio %.1f m, caminhão %.0f km/h", slot.label, slot.note.c_str(), slot.off, td.speed * 3.6);
+      if (!slot.car.ptr) continue;
+      std::snprintf(line, sizeof line, "escolta (%s): %s, %.0f m atrás (alvo %.0f), %.1f m de lado, %s, pedida %.0f km/h, caminhão %.0f km/h", slot.label,
+                    slot.note.c_str(), slot.place.behind, slot.gap, slot.place.lateral, slot.place.on_trail ? "no rastro" : "fora do rastro",
+                    slot.want * 3.6, td.speed * 3.6);
       Log(line);
     }
   }
@@ -622,9 +656,10 @@ void DrawEscort(SPF_UI_API* ui, void*) {
     if (!i.valid) continue;
     std::snprintf(line, sizeof line, "%s  (id %u)", i.model, i.id);
     ui->UI_Text(line);
-    std::snprintf(line, sizeof line, "Lugar: %.0f m atrás, pelo seu rastro   Desvio: %.1f m", slot.gap, slot.off);
+    std::snprintf(line, sizeof line, "Distância: %.0f m atrás (alvo %.0f m)   De lado: %.1f m   %s", slot.place.behind, slot.gap, slot.place.lateral,
+                  slot.place.on_trail ? "no seu rastro" : "fora do rastro");
     ui->UI_Text(line);
-    std::snprintf(line, sizeof line, "Velocidade: %.0f km/h   Limite dado: %.0f km/h   Alvo da IA: %.0f km/h", i.speed * 3.6, i.limit * 3.6, i.target * 3.6);
+    std::snprintf(line, sizeof line, "Velocidade: %.0f km/h   Pedida: %.0f km/h   Alvo da IA: %.0f km/h", i.speed * 3.6, slot.want * 3.6, i.target * 3.6);
     ui->UI_Text(line);
     std::snprintf(line, sizeof line, "Posição: [%.1f; %.1f; %.1f]", i.pos.x, i.pos.y, i.pos.z);
     ui->UI_Text(line);

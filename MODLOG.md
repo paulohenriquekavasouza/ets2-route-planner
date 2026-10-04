@@ -457,3 +457,30 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   a escolta agora" e "Dispensar a escolta". A regra automática (250 m após iniciar serviço) continua.
 - Spawn de cada carro no ponto do rastro a (distância + 15 m); rastro curto → em linha reta atrás.
 - A testar no jogo: condução pelo rastro (`escort::Drive`, corpo físico), nunca exercitada.
+
+## v2.6.1 (branch `escolta`, 2026-10-04) — IA da escolta por velocidade + conferência do spawn
+- Teste da v2.6.0: carro nasce, mas NÃO é conduzido. Log: desvio 10–20 m andando; com o caminhão parado o
+  carro foge (5 → 80 m). Leitura ao vivo: limite = -0.0, velocidade 4,6 m/s.
+- **Achado 1: escrever o corpo físico só "pega" com o carro parado.** Nos testes externos (v2.5 desta branch)
+  o carro estava com limite 0 (corpo adormecido) e as escritas em B+0x150/A+0x12c ficaram. Com o carro andando,
+  o motor de física sobrescreve a cada passo → `escort::Drive`/`Orientation` removidos. Conduzir o carro pelo
+  rastro via corpo físico NÃO funciona.
+- **Achado 2 (bug meu):** eu escrevia limite = velocidade do caminhão; parado, a telemetria dá -0 e limite
+  negativo = "sem limite" para a IA → o carro saía andando. Agora limite mínimo 0,001 ("fique parado").
+- **Nova lógica (`escort::Steer`)** — o carro continua sendo IA normal (dirige, rodas giram); o plugin faz o papel
+  do controlador de escolta do DLC:
+  - `Trail::Project`: ponto do rastro mais próximo do carro → distância atrás (pelo rastro) e desvio lateral;
+    `Locate` cai para o referencial do caminhão quando o carro está longe do rastro ou na ponta dele.
+  - `WantSpeed`: velocidade do caminhão + 0,35·(distância − alvo), limitado a −8/+12 m/s, 0..42 m/s; caminhão
+    parado e carro quase no lugar → 0.
+  - escreve o limite (+0x430), limpa debug_pause (bit 63) e allow_overtake (bit 20), e empurra a velocidade
+    real da física (phys+0x70 e +0xe8, como no ets2-police): +3 m/s² para alcançar, −6 m/s² para frear.
+  - "fora do caminho" (não está no rastro e > 12 m de lado, ou à frente do caminhão) ou > 350 m atrás por
+    2,5 s → carro excluído e outro nasce no rastro.
+- **Conferência do spawn:** depois de achar o carro recém-criado, `Place::Good`: ≥ 18 m atrás, ≤ 2,5 m de lado
+  (mesma faixa) e sentido ≥ 0,7 (mesma direção). Senão exclui e tenta 10 m mais atrás (ciclo de 6 distâncias:
+  alvo + 10 … alvo + 60 m). O rastro agora é gravado sempre (mesmo sem escolta ativa), para o primeiro carro já
+  nascer na faixa por onde passamos; rastro de 400 m.
+- Testes: projeção, lugar bom/ruim (faixa ao lado, contramão, à frente), velocidades.
+- Limite conhecido: em cruzamentos a IA pode ir por outro caminho → troca de carro (aparece outro atrás).
+  NÃO testado no jogo.
