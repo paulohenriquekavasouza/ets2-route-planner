@@ -377,3 +377,14 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   Canal de telemetria truck.fuel.amount (getter 0x64b630) = [veh+0x190] (capacidade, L) × ([veh+0x1b8] (nível 0..1) +
   [truck+0x1158] (variação pendente)); truck = [actor+0x18] (vtable rva 0x22f0260), veh = [truck+0x1f8]. Encher = nível 1,
   pendente 0. Conferido ao vivo só por leitura (800 L, nível 0,073). Escrita ainda não confirmada em jogo.
+
+## Estudo (2026-10-04, sem código): mostrar mensagens na caixa de aviso do jogo ("Freio de mão acionado!")
+- Textos: chaves `aca_parking_brake_on1` (título) e `aca_parking_brake_on2` (texto) do localization.sui; código em 0xa04660..0xa049c9.
+- **Função que mostra: `0xa63920(hud, char** titulo, char** texto)`** (prólogo `40 53 48 81 ec 40 04 00 00 48`).
+  - `hud = [[[exe+0x36ae6d8]+0x2b30]+0xb0]`; o painel é `adv = [[hud+0x50]+0x340]`.
+  - Monta "titulo|texto" (`%s|%s`, até 0x400 bytes), copia para a string em `adv+0xf18` (0xf4920) e põe `adv+0xf38 = 1`.
+  - Título ou texto vazio → grava string vazia = esconde a caixa (é assim que o jogo a fecha ao soltar o freio).
+  - O jogo só chama com `[[owner+0x2b30]+0x210]` entre 3 e 5 (dirigindo) e `adv+0xf39 == 0`.
+- O texto aceita a marcação do jogo: `<br>`, `<color value=@@clr_sel@@>…`, chaves `@@…@@`; a tecla vem de `$KEY$` substituído antes (0xf3f20).
+- Não verificado: de onde vem o ícone (P), acentos (o jogo usa UTF-8), se a caixa some sozinha, e a disputa com os avisos
+  do próprio jogo (cada aviso dele sobrescreve a mesma string). Chamar só na thread do jogo (Update do plugin), com SEH e conferência do prólogo.
