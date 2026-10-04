@@ -615,3 +615,22 @@ Não testado em jogo ainda (jogo fechado na hora).
 - **Correção:** ao forçar uma curva nova, toda curva nossa que ficou com bit 7 (`escort::Blocked`) é irmã dela →
   solta; depois off/on na nova para limpar as marcas. Vale a mais nova (a que seguimos depois que as saídas se separam).
 - Ainda desconhecido: em que momento a IA escolhe a saída. Não testado em jogo.
+
+## escolta: a IA planeja ~1 km à frente → refazer o plano da viatura (2026-10-04, núcleo)
+- Teste: mesmo com UMA só saída forçada no "T" (log: "vale a mais nova"), a viatura foi para o outro lado.
+- **Causa (sonda ao vivo, só leitura):** todo veículo de IA guarda o caminho planejado numa lista ligada em
+  `veh+0xf0` {vtbl (rva 0x224c7a8), count, head (+0x100), tail (+0x108)}; sentinela = endereço de `head`.
+  Nó de 0x28 bytes: next, prev, lane* (+0x10), u32 (+0x18, 0), f32 comprimento (+0x20 = lane+0x70), u32 flags
+  (+0x24: 1 planejado; 0x11 = já entrou). Alterna faixa de estrada (vtable 0x22ddbc8, tipo 0x500000) e curva de
+  cruzamento (vtable 0x22de6a0, tipo 0x600000). Os planos somam 700–1500 m (vários cruzamentos); crescem quando o
+  carro avança de faixa e o total fica curto. Logo a saída é escolhida MUITO antes; forçar a curva quando o caminhão
+  passa só vale para quem planejar depois. `veh+0x88` = faixa atual (objeto), `veh+0x18/+0x20` = vizinhos na faixa.
+- RE do planejador: pontuação do candidato = controlador.vt[6] = 0x941310 (forçada → 0xfffffffe, bloqueada → 0);
+  melhor candidato 0x940ed0; próxima faixa 0x940c50 (lane.vt[0x80] lista as sucessoras). Flags de navegação:
+  curva+0x74 bit 6 → 0x10000, bit 7 → 0x20000 (virtual 0x94cf40).
+- **Correção:** `escort::Replan(carro, curva)` ao forçar uma curva: se o plano do carro tem uma curva bloqueada
+  (bit 7 = irmã da nossa) ainda não percorrida e que não é a faixa atual, o nó passa a apontar para a nossa curva
+  (comprimento de curva+0x70) e a lista é cortada ali; o jogo continua o plano a partir dela. Nós cortados ficam
+  no pool do jogo (40 bytes cada, não devolvidos). Teste em `routes_test` com lista falsa.
+- Limites: carro logicamente em outra faixa de entrada (curva dele não é irmã) não é corrigido; se já entrou na curva errada, tarde demais.
+- Escrita em estrutura interna da IA, NÃO testada em jogo. Sondas: scratchpad plan2..5.py (layout acima).

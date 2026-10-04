@@ -309,6 +309,50 @@ inline bool Blocked(const Curve& c) {
   }
 }
 
+// ---- the AI's planned path -----------------------------------------------------------------------
+// Every AI vehicle plans 700-1500 m ahead (probed live, MODLOG 2026-10-04): a linked list at
+// vehicle+0xf0 {vtbl, count, head (+0x100), tail (+0x108)}, the sentinel being the address of `head`.
+// Node (0x28 bytes): next, prev, lane* (+0x10), u32 (+0x18, 0), f32 length (+0x20, = lane+0x70),
+// u32 flags (+0x24: 1 planned, bit 4 = already entered). Lanes alternate road lane / junction curve.
+// So the exit of a junction is chosen long before the car gets there, and forcing a curve when the
+// truck drives it (ForceCurve) comes too late for a car that is already following us.
+//
+// Replan: if the car's plan holds a curve that ForceCurve has just blocked (a sibling of `ours`, bit 7),
+// that node is pointed at `ours` and the plan is cut there; the game plans on from our curve when the
+// car advances. Returns 1 changed, 0 nothing to change (already ours, or no blocked curve ahead).
+// ponytail: the nodes cut off are left in the game's pool (40 bytes each), not handed back.
+inline int ReplanList(uint8_t* veh, uint8_t* ours) {
+  uint64_t* count = reinterpret_cast<uint64_t*>(veh + 0xf8);
+  uint8_t* const sentinel = veh + 0x100;
+  if (*count < 2 || *count > 64) return 0;
+  uint8_t* node = *reinterpret_cast<uint8_t**>(sentinel);
+  for (uint64_t i = 0; i < *count && node && node != sentinel; ++i, node = *reinterpret_cast<uint8_t**>(node)) {
+    uint8_t* const lane = *reinterpret_cast<uint8_t**>(node + 0x10);
+    if (!lane) return 0;
+    if (lane == ours) return 0; // it is already coming our way
+    const bool entered = (*reinterpret_cast<const uint32_t*>(node + 0x24) & 0x10) != 0;
+    const bool curve = *reinterpret_cast<void**>(lane) == *reinterpret_cast<void**>(ours); // same class as ours
+    if (i == 0 || entered || !curve || !(*reinterpret_cast<const uint32_t*>(lane + 0x74) & 0x80)) continue;
+    *reinterpret_cast<uint8_t**>(node + 0x10) = ours;
+    *reinterpret_cast<uint32_t*>(node + 0x18) = 0;
+    *reinterpret_cast<float*>(node + 0x20) = *reinterpret_cast<const float*>(ours + 0x70);
+    *reinterpret_cast<uint8_t**>(node) = sentinel;         // last node now
+    *reinterpret_cast<uint8_t**>(sentinel + 8) = node;     // tail
+    *count = i + 1;
+    return 1;
+  }
+  return 0;
+}
+
+inline int Replan(const Car& c, const Curve& ours) {
+  if (!ours.item || !StillThere(c)) return 0;
+  __try {
+    return ReplanList(c.ptr, ours.item);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+}
+
 // ---- following the truck's own path ------------------------------------------------------------
 // The car stays an ordinary AI car (it steers, its wheels turn, the physics is the game's). What we
 // add is the escort's brain, like the Special Transport controller: where the car is relative to the

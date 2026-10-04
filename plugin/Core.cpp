@@ -632,6 +632,10 @@ void UpdateEscort() {
         Log("escolta: cruzamento, " + std::to_string(dropped) + " curva(s) da mesma entrada solta(s): vale a mais nova");
       }
       g_escort_forced.push_back({here, g_escort_travel});
+      // The cars behind chose their exit long ago (the AI plans ~1 km ahead): point their plan at our curve.
+      for (const auto& slot : g_escort_slots)
+        if (const int r = slot.car.ptr ? escort::Replan(slot.car, here) : 0)
+          Log(std::string("escolta (") + slot.label + (r > 0 ? "): ia sair por outro lado; plano refeito para a nossa curva" : "): falha ao refazer o plano"));
       std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada (%d ativas)", static_cast<void*>(here.item), static_cast<int>(g_escort_forced.size()));
       Log(line);
     }

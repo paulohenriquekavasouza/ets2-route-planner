@@ -48,6 +48,24 @@ int main() {
   assert(escort::InTheWay(escort::Locate(trail, truck, 0.25, {1.0, 0, -20}, south), 15, 45));
   assert(!escort::InTheWay(escort::Locate(trail, truck, 0.25, {4.0, 0, -20}, north), 15, 45));
   assert(!escort::InTheWay(escort::Locate(trail, truck, 0.25, {0, 0, -2}, north), 15, 45)); // 48 m back
+  // the AI's planned path: road, curve (blocked: a sibling of ours was forced), road -> road, our curve
+  {
+    struct Lane { void* vt; uint8_t pad[0x68]; float len; uint32_t flags; };
+    struct Node { Node* next; Node* prev; Lane* lane; uint32_t zero; uint32_t pad; float len; uint32_t flags; };
+    int road_class = 0, curve_class = 0;
+    Lane road{&road_class, {}, 200, 0}, wrong{&curve_class, {}, 15, 0x80}, ours{&curve_class, {}, 22, 0x40}, after{&road_class, {}, 300, 0};
+    alignas(8) uint8_t veh[0x110] = {};
+    Node* const sentinel = reinterpret_cast<Node*>(veh + 0x100);
+    Node n2{sentinel, nullptr, &after, 0, 0, 300, 1}, n1{&n2, nullptr, &wrong, 0, 0, 15, 1}, n0{&n1, sentinel, &road, 0, 0, 200, 0x11};
+    n1.prev = &n0, n2.prev = &n1;
+    *reinterpret_cast<uint64_t*>(veh + 0xf8) = 3;
+    sentinel->next = &n0, sentinel->prev = &n2;
+    assert(escort::ReplanList(veh, reinterpret_cast<uint8_t*>(&ours)) == 1);
+    assert(*reinterpret_cast<uint64_t*>(veh + 0xf8) == 2 && n1.lane == &ours && n1.len == 22 && n1.next == sentinel && sentinel->prev == &n1);
+    assert(escort::ReplanList(veh, reinterpret_cast<uint8_t*>(&ours)) == 0); // already ours
+    n1.lane = &wrong, n1.flags = 0x11;                                        // already driving the wrong curve: too late, left alone
+    assert(escort::ReplanList(veh, reinterpret_cast<uint8_t*>(&ours)) == 0 && n1.lane == &wrong);
+  }
   // U-turn: 40 m north, across 4 m, 40 m back south. A car on the first leg is nearer to the return leg's
   // points in a straight line only where they overlap; with the hint it stays on the stretch it was on.
   escort::Trail uturn;
