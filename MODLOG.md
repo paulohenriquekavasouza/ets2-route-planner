@@ -373,3 +373,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     substituída se mudou, e aí precisa de "Recarregar Framework" (a versão do CMake mora nela: não subir a versão a cada ajuste).
 - O bloqueio do mouse passa pela hospedeira (o SPF identifica o pedido pelo endereço de retorno).
 - Compila e os testes passam; recarga em si já testada em jogo na branch `escolta`. Esta montagem ainda não foi testada em jogo.
+- **Abastecer ao iniciar o serviço** (opção "Abastecer o caminhão ao iniciar", ligada por padrão): `game::Refuel()`.
+  Canal de telemetria truck.fuel.amount (getter 0x64b630) = [veh+0x190] (capacidade, L) × ([veh+0x1b8] (nível 0..1) +
+  [truck+0x1158] (variação pendente)); truck = [actor+0x18] (vtable rva 0x22f0260), veh = [truck+0x1f8]. Encher = nível 1,
+  pendente 0. Conferido ao vivo só por leitura (800 L, nível 0,073). Escrita ainda não confirmada em jogo.
