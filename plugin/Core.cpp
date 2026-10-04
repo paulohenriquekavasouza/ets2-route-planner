@@ -63,7 +63,6 @@ struct EscortSlot {
   escort::Vec spawn_at;
   escort::Place place;    // where the car is relative to our trail
   float want = 0;         // m/s asked of it
-  bool changing = false;  // being slid into our lane right now
   std::string note = "sem carro";
 };
 std::vector<EscortSlot> g_escort_slots = {{"Polícia", 30.0}};
@@ -596,7 +595,7 @@ void UpdateEscort() {
 
   for (auto& slot : g_escort_slots) {
     if (slot.car.ptr) {
-      if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, slot.hint, &slot.place, &slot.want, &slot.changing)) {
+      if (!escort::Steer(slot.car, g_escort_trail, truck, heading, td.speed, slot.gap, dt, slot.hint, &slot.place, &slot.want)) {
         DropCar(slot, "o carro sumiu do tráfego; outro em instantes", 60);
         continue;
       }
@@ -609,7 +608,7 @@ void UpdateEscort() {
         DropCar(slot, line, 30);
         continue;
       }
-      slot.note = slot.changing ? "trocando para a sua faixa" : slot.place.behind > slot.gap + 15 ? "alcançando" : slot.want == 0 ? "parado atrás de você" : "no lugar";
+      slot.note = slot.place.behind > slot.gap + 15 ? "alcançando" : slot.want == 0 ? "parado atrás de você" : "no lugar";
       continue;
     }
     if (slot.wait > 0 && --slot.wait > 0) continue;
