@@ -316,3 +316,21 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - v2.4 refeita (2026-10-04) a pedido: em "Planejar", o botão "Salvar esta rota como favorita" fica sob a lista de
   cargas (só aparece com origem e destino escolhidos) e só habilita com a carga selecionada; mostra o que falta.
   Tag `v2.4` movida para este commit e backup `v2.4` regravado. Não testado no jogo antes da tag.
+
+## v2.5.0 (2026-10-04) — distância do serviço medida pelo GPS do jogo (master; não confundir com a v2.5.x da branch `escolta`)
+- Pedido: calcular a rota real em vez da estimativa em linha reta ("caminho 2").
+- **GPS do jogo** (final do handler `company_portal`, 0x5c9fc6): estado `[game+0x42f0]` (game =
+  [exe+0x36ae6d8]) — 0, 2, 3, 4, 5 permitem; 1, 6, 7 = "Unable to override gps while on job".
+  `0x7b47b0(game, alvo*, item_de_mapa_da_empresa, 0, 0)` monta um alvo de 24 bytes (1º dword = 2 →
+  sem alvo); `0x4fad00(game+0x4128, 5, array{vtbl rva 0x21fafa8, data, size, capacity}*)` troca os
+  pontos do GPS (copia o array com 0x4fe9d0). A distância da rota sai na telemetria
+  (`SPF_NavigationData.navigation_distance`, metros).
+- **Novo fluxo do Iniciar** (caixa "Distância (pagamento) medida pelo GPS do jogo", padrão ligada; exige
+  o teleporte): 7h/tempo limpo → teleporte para o pátio da ORIGEM antes de criar o serviço
+  (`TeleportToTrailerSpot` agora aceita a empresa por tokens) → 45 quadros → `SetGpsToCompany(destino)` →
+  lê a distância até ficar 45 quadros sem mudar (mín. 30 quadros, > 1 km, limite ~8 s) → cria o serviço com
+  esses km em params+0x64 → não teleporta de novo. Falhou em qualquer passo = estimativa antiga.
+  Log: "distância: N km (GPS do jogo|estimativa; estimativa em linha reta M km)" → serve para calibrar
+  o fator 19 × 1,2.
+- "Maior rota" continua pela estimativa (o GPS só mede uma rota por vez).
+- NÃO testado no jogo.

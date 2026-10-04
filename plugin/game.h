@@ -24,6 +24,11 @@ constexpr uintptr_t STRING_DTOR = 0x11a290;
 constexpr uintptr_t FREE = 0xfbf00;
 constexpr uintptr_t FIND_COMPANY = 0x7d0df0; // company* (u64* company token, u64* city token), as the generator looks them up
 constexpr uintptr_t CARGO = 0xab7840;     // cargo_data* (u64* token): the game's cargo by token, null/dead if missing
+// GPS: what `cheat company_portal` does after teleporting (0x5c9fe9): 0x7b47b0(game, target*, map item,
+// 0, 0) builds a 24-byte navigation target (first dword 2 = none), then 0x4fad00(game+0x4128, 5,
+// array{vtbl, data, size, capacity}*) replaces the GPS waypoints (it copies the array). The game only
+// allows it while [game+0x42f0] is 0, 2, 3, 4 or 5 (1, 6, 7 = "Unable to override gps while on job").
+constexpr uintptr_t NAV_TARGET = 0x7b47b0, NAV_SET = 0x4fad00, NAV_ARRAY_VTBL = 0x21fafa8;
 constexpr uintptr_t TELEPORT = 0x5ddf20;  // bool (actor*, placement*, bool, bool, bool): what company_portal ends with
 constexpr uintptr_t ACTOR_OWNER = 0x36ae6d8; // game object; +0x31b0 = the player's actor
 constexpr uintptr_t CANCEL = 0x7a5c40;    // void (ctrl*): cancel the player's job (penalty applies)
@@ -55,6 +60,8 @@ constexpr Sig kSigs[] = {
     {FIND_COMPANY, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x7c, 0x24, 0x18}},
     {CARGO, {0x4c, 0x8b, 0xdc, 0x48, 0x81, 0xec, 0xb8, 0x00, 0x00, 0x00}},
     {TELEPORT, {0x44, 0x88, 0x4c, 0x24, 0x20, 0x44, 0x88, 0x44, 0x24, 0x18}},
+    {NAV_TARGET, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
+    {NAV_SET, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18}},
     {CANCEL, {0x48, 0x89, 0x5c, 0x24, 0x18, 0x57, 0x48, 0x83, 0xec, 0x30}},
 };
 
@@ -236,7 +243,9 @@ inline bool StartJob(uint64_t src_city, uint64_t dst_city, uint64_t src_co, uint
 // 1/256 m, quaternion w,x,y,z at +0x10). Teleport = 0x5ddf20(actor, placement*, 0, 0, 0) like
 // company_portal does; placement = f32 x,y,z local + i16 sector x,z (world = local + sector*512),
 // then quaternion w,x,y,z. Fills `where` with the chosen target (world x,y,z).
-inline bool TeleportToTrailerSpot(float where[3]) {
+// With company tokens the yard is that company's (works before the job exists); with 0 it is the
+// current job's source company.
+inline bool TeleportToTrailerSpot(float where[3], uint64_t company_tok = 0, uint64_t city_tok = 0) {
   struct Spot {
     double x, y, z;
     float q[4];
@@ -247,9 +256,15 @@ inline bool TeleportToTrailerSpot(float where[3]) {
     float q[4];
   };
   __try {
-    const uint8_t* const player = Player();
-    const uint8_t* job = player ? Ptr(player, 0x28) : nullptr;
-    const uint8_t* company = Alive(job) ? Ptr(job, 0x28) : nullptr;
+    const uint8_t* company = nullptr;
+    if (company_tok) {
+      company = At<uint8_t* (*)(uint64_t*, uint64_t*)>(FIND_COMPANY)(&company_tok, &city_tok);
+      if (!Alive(company)) company = nullptr;
+    } else {
+      const uint8_t* const player = Player();
+      const uint8_t* job = player ? Ptr(player, 0x28) : nullptr;
+      company = Alive(job) ? Ptr(job, 0x28) : nullptr;
+    }
     const uint8_t* item = company ? Ptr(company, 0x10) : nullptr;
     uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
     uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
@@ -306,6 +321,33 @@ inline bool ReleaseParkingBrake() {
     actor[0x1c4] = 0;
     *reinterpret_cast<float*>(actor + 0x3cc) = 0.0f;
     *reinterpret_cast<float*>(actor + 0x3d0) = 0.0f;
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+// Points the game's GPS at a company, so the route advisor computes the real road route from where
+// the truck is. False if the company is unknown, has no navigation target, or the game is in a state
+// where it refuses (on a job).
+inline bool SetGpsToCompany(uint64_t company_tok, uint64_t city_tok) {
+  struct Array {
+    uintptr_t vtbl;
+    void* data;
+    uint64_t size, capacity;
+  };
+  __try {
+    uint8_t* const game = *At<uint8_t**>(ACTOR_OWNER);
+    const uint8_t* company = At<uint8_t* (*)(uint64_t*, uint64_t*)>(FIND_COMPANY)(&company_tok, &city_tok);
+    uint8_t* const item = Alive(company) ? Ptr(company, 0x10) : nullptr;
+    if (!game || !item) return false;
+    const int state = *reinterpret_cast<const int*>(game + 0x42f0);
+    if (state < 0 || state > 7 || state == 1 || state == 6 || state == 7) return false;
+    alignas(16) uint8_t target[32] = {};
+    At<void (*)(void*, void*, void*, uint64_t, bool)>(NAV_TARGET)(game, target, item, 0, false);
+    if (*reinterpret_cast<const int*>(target) == 2) return false;
+    Array targets{Base() + NAV_ARRAY_VTBL, target, 1, 1};
+    At<void (*)(void*, int, void*)>(NAV_SET)(game + 0x4128, 5, &targets);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;

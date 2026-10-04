@@ -45,6 +45,13 @@ bool g_teleport = true;       // drive-free: put the truck at the source company
 bool g_release_brake = true;  // and release the parking brake the teleport engages
 bool g_morning = true;        // 07:00 and clear weather before the job is created (its deadline counts from then)
 int g_start_in = -1;          // frames until the job is created after the console commands (-1 = none)
+bool g_gps_km = true;         // measure the route with the game's GPS instead of estimating it
+// Measuring: 0 = idle, 1 = truck just put in the source yard (waiting to settle), 2 = GPS pointed at the
+// destination, polling the route advisor's distance until it stops changing.
+int g_measure = 0, g_measure_frames = 0, g_measure_stable = 0;
+float g_measure_last = -1;
+double g_measured_km = -1;    // result for the job being created (-1 = use the estimate)
+bool g_already_there = false; // the truck was moved to the yard before the job was created
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
 bool g_any_cargo = false;     // also list cargo the chosen companies don't normally trade
@@ -259,10 +266,13 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
     }
     ui->UI_EndListBox();
   }
-  const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
+  const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None && g_start_in < 0 && g_measure == 0;
   ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
   ui->UI_Checkbox("Soltar o freio de mão após teleportar", &g_release_brake);
   ui->UI_Checkbox("Antes de iniciar: 7h da manhã e tempo limpo", &g_morning);
+  ui->UI_BeginDisabled(!g_teleport); // the GPS measures from where the truck is, so it needs the teleport
+  ui->UI_Checkbox("Distância (pagamento) medida pelo GPS do jogo", &g_gps_km);
+  ui->UI_EndDisabled();
   ui->UI_BeginDisabled(!can);
   if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
   ui->UI_EndDisabled();
@@ -327,7 +337,7 @@ void DrawFavorites(SPF_UI_API* ui, bool on_job) {
     ui->UI_TextWrapped("Nenhuma favorita ainda. Em \"Planejar\", escolha origem, destino e carga e use \"Adicionar esta rota às favoritas\".");
     return;
   }
-  const bool can_start = !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
+  const bool can_start = !on_job && g_supported && g_pending == Pending::None && g_start_in < 0 && g_measure == 0;
   int remove = -1;
   for (int i = 0; i < static_cast<int>(g_favorites.size()); ++i) {
     const Favorite& f = g_favorites[i];
@@ -460,10 +470,11 @@ void ReleaseBrake(const char* when) {
   Log(std::string("freio de mão ") + when + ": " + (was ? "puxado" : "solto") + " -> " + (ok ? "soltando" : "falhou"));
 }
 
-void Teleport() {
+// To the yard of the current job's source company, or of the named company (before the job exists).
+bool Teleport(const std::string& company = "", const std::string& city = "") {
   const std::string before = TruckPos();
   float to[3] = {};
-  const bool ok = game::TeleportToTrailerSpot(to);
+  const bool ok = game::TeleportToTrailerSpot(to, company.empty() ? 0 : Token(company.c_str()), city.empty() ? 0 : Token(city.c_str()));
   char target[96];
   std::snprintf(target, sizeof target, "[%.1f; %.1f; %.1f]", to[0], to[1], to[2]);
   Log(std::string("teleporte para o pátio ") + target + ": " + (ok ? "ok" : "falhou") + ", caminhão em " + before + " -> " + TruckPos());
@@ -472,6 +483,61 @@ void Teleport() {
   if (!ok) {
     g_status = "Teleporte falhou (motivo no game.log.txt).";
     g_status_error = true;
+  }
+  return ok;
+}
+
+void CreateJob() {
+  g_measure = 0;
+  g_pending = Pending::Create;
+}
+
+// Step 1 of measuring: the truck goes to the source yard, because the GPS routes from the truck.
+void BeginMeasure() {
+  const RouteOption& o = g_options[g_selected];
+  g_measured_km = -1;
+  g_already_there = Teleport(o.src_company, g_src.city);
+  if (!g_already_there) return CreateJob(); // the estimate will do; the usual teleport is tried after the job starts
+  g_measure = 1;
+  g_measure_frames = 45;
+  g_status = "Medindo a rota pelo GPS…";
+  g_status_error = false;
+}
+
+void UpdateMeasure() {
+  if (g_selected < 0 || g_selected >= static_cast<int>(g_options.size())) { // the route was changed meanwhile
+    g_measure = 0;
+    g_status = "Início cancelado: a rota foi alterada durante a medição.";
+    g_status_error = true;
+    return;
+  }
+  if (g_measure == 1) {
+    if (--g_measure_frames > 0) return;
+    const RouteOption& o = g_options[g_selected];
+    if (!game::SetGpsToCompany(Token(o.dst_company.c_str()), Token(g_dst.city.c_str()))) {
+      Log("gps: o jogo não aceitou o destino; usando a estimativa");
+      return CreateJob();
+    }
+    g_measure = 2;
+    g_measure_frames = g_measure_stable = 0;
+    g_measure_last = -1;
+  } else if (g_measure == 2) {
+    SPF_NavigationData nd{};
+    g_core->telemetry->Tel_GetNavigationData(g_tel, &nd, sizeof nd);
+    ++g_measure_frames;
+    // the advisor needs a moment to route; the value is final once it stops changing
+    if (g_measure_frames >= 30 && nd.navigation_distance > 1000.0f) {
+      g_measure_stable = std::abs(nd.navigation_distance - g_measure_last) < 1.0f ? g_measure_stable + 1 : 0;
+      g_measure_last = nd.navigation_distance;
+      if (g_measure_stable >= 45) {
+        g_measured_km = nd.navigation_distance / 1000.0;
+        return CreateJob();
+      }
+    }
+    if (g_measure_frames > 480) { // ~8 s without a stable route
+      Log("gps: sem rota estável a tempo; usando a estimativa");
+      CreateJob();
+    }
   }
 }
 
@@ -506,6 +572,15 @@ void PickLongestRoute() {
   Log(g_status);
 }
 
+// After the optional time/weather step: measure the route with the GPS (needs the teleport), or create the job right away.
+void BeginStart() {
+  g_already_there = false;
+  g_measured_km = -1;
+  const bool valid = g_selected >= 0 && g_selected < static_cast<int>(g_options.size());
+  if (valid && g_gps_km && g_teleport) BeginMeasure();
+  else CreateJob();
+}
+
 void RunPending() {
   const Pending what = g_pending;
   g_pending = Pending::None;
@@ -522,17 +597,19 @@ void RunPending() {
       Log("antes de iniciar: g_set_time 7 0, g_set_weather 0");
       g_start_in = 5;
     } else {
-      g_pending = Pending::Create;
-      RunPending();
+      BeginStart();
     }
   } else if (what == Pending::Create && g_selected >= 0 && g_selected < static_cast<int>(g_options.size())) {
     const RouteOption o = g_options[g_selected];
     char err[256] = {};
     int code = -1, tries = 0;
     bool ok = false;
-    const double km = game::FreightKm(Token(o.src_company.c_str()), Token(g_src.city.c_str()), Token(o.dst_company.c_str()),
-                                      Token(g_dst.city.c_str()));
-    Log("distância estimada: " + std::to_string(static_cast<int>(km)) + " km");
+    const double estimate = game::FreightKm(Token(o.src_company.c_str()), Token(g_src.city.c_str()), Token(o.dst_company.c_str()),
+                                            Token(g_dst.city.c_str()));
+    const double km = g_measured_km > 0 ? g_measured_km : estimate;
+    Log("distância: " + std::to_string(static_cast<int>(km)) + " km (" + (g_measured_km > 0 ? "GPS do jogo" : "estimativa") + "; estimativa em linha reta " +
+        std::to_string(static_cast<int>(estimate)) + " km)");
+    g_measured_km = -1;
     do { // 14 = the trailer spot the game picked is occupied; it picks again on the next try
       ok = game::StartJob(Token(g_src.city.c_str()), Token(g_dst.city.c_str()), Token(o.src_company.c_str()), Token(o.dst_company.c_str()),
                           Token(o.cargo.c_str()), static_cast<float>(km), err, sizeof err, &code);
@@ -542,7 +619,8 @@ void RunPending() {
     std::snprintf(msg, sizeof msg, "start %s %s.%s -> %s.%s%s: %s", o.cargo.c_str(), o.src_company.c_str(), g_src.city.c_str(), o.dst_company.c_str(),
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
-    if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
+    if (ok && g_teleport && !g_already_there) g_teleport_in = 10; // let the new job settle for a few frames first
+    g_already_there = false;
     g_status = ok ? "Serviço iniciado: " + CargoName(g_data, o.cargo) + ", " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) : err;
     g_status_error = !ok;
   } else if (what == Pending::Longest) {
@@ -567,10 +645,9 @@ void OnUpdate() {
   std::lock_guard lock(g_mu);
   if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
-  if (g_start_in >= 0 && g_start_in-- == 0) {
-    g_pending = Pending::Create;
-    RunPending();
-  }
+  if (g_start_in >= 0 && g_start_in-- == 0) BeginStart();
+  if (g_measure != 0) UpdateMeasure();
+  if (g_pending == Pending::Create) RunPending();
   if (g_teleport_in >= 0 && g_teleport_in-- == 0) Teleport();
   if (g_tp_check_in >= 0 && g_tp_check_in-- == 0) {
     Log("1 s depois do teleporte: caminhão em " + TruckPos());
