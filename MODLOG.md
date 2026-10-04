@@ -323,3 +323,11 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
 - A branch `gps-distancia` (commit ecbb08d) guarda o código e as notas: `SetGpsToCompany` (0x7b47b0 + 0x4fad00,
   estado [game+0x42f0]), teleporte para o pátio por tokens da empresa e o fluxo teleporte → GPS → leitura da
   telemetria → criação do serviço. Nunca foi testado no jogo.
+
+## v2.5.0 (2026-10-04) — botão "Cidade atual" (master, sobre a v2.4)
+- Em "Planejar", logo abaixo de "Origem": botão **Cidade atual** → país e cidade de origem = a cidade mais
+  próxima do caminhão. `CityPoints()` (extraído do "Maior rota": centro do item de mapa da 1ª empresa
+  conhecida de cada cidade, via 0x7d0df0) + `NearestPoint` (routes.h, testado) com a posição da telemetria.
+  Roda no OnUpdate (`Pending::CurrentCity`) porque consulta o jogo. Mostra a cidade e a distância no mapa.
+- Limite conhecido: "cidade" = onde ficam as empresas dela; numa estrada longe de tudo, vale a mais próxima.
+- NÃO testado no jogo.

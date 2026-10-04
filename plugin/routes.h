@@ -152,6 +152,19 @@ inline std::pair<int, int> FarthestPair(const std::vector<MapPoint>& pts, double
   return best;
 }
 
+// Index of the valid point closest to (x, z), or -1; `dist` gets the distance.
+inline int NearestPoint(const std::vector<MapPoint>& pts, double x, double z, double* dist) {
+  int best = -1;
+  double best_d2 = 0;
+  for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
+    if (!pts[i].valid) continue;
+    const double dx = pts[i].x - x, dz = pts[i].z - z, d2 = dx * dx + dz * dz;
+    if (best < 0 || d2 < best_d2) best = i, best_d2 = d2;
+  }
+  if (dist) *dist = std::sqrt(best_d2);
+  return best;
+}
+
 // SCS token (base 38, first character least significant), as the game's console commands parse it.
 constexpr unsigned long long Token(const char* s) {
   unsigned long long value = 0, scale = 1;

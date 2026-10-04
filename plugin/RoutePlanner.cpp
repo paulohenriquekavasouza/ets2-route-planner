@@ -55,7 +55,7 @@ bool g_confirm_cancel = false;
 std::string g_status;
 bool g_status_error = false;
 
-enum class Pending { None, Start, Cancel, Teleport, Create, Longest };
+enum class Pending { None, Start, Cancel, Teleport, Create, Longest, CurrentCity };
 
 enum class View { Planner, Favorites };
 View g_view = View::Planner;
@@ -407,6 +407,9 @@ void Draw(SPF_UI_API* ui, void*) {
     } else {
       if (g_editing >= 0) ui->UI_TextColored(0.95f, 0.75f, 0.3f, 1.0f, "Editando uma favorita: mude o que quiser e salve.");
       ui->UI_SeparatorText("Origem");
+      ui->UI_BeginDisabled(!g_supported || g_pending != Pending::None);
+      if (ui->UI_Button("Cidade atual", -1, 0)) g_pending = Pending::CurrentCity; // needs the game: runs in OnUpdate
+      ui->UI_EndDisabled();
       PlaceCombos(ui, "src", g_src);
       ui->UI_SeparatorText("Destino");
       PlaceCombos(ui, "dst", g_dst);
@@ -476,10 +479,12 @@ void Teleport() {
 }
 
 // Farthest two cities on the map: fills origin and destination and leaves the cargo to the player.
-void PickLongestRoute() {
+// Where each city of g_data.cities is on the map (same order): the first of its companies the game
+// knows. Asks the game, so only from OnUpdate.
+std::vector<MapPoint> CityPoints() {
   std::vector<MapPoint> pts(g_data.cities.size());
   for (size_t i = 0; i < g_data.cities.size(); ++i) {
-    for (const auto& b : g_data.branches) { // a city is where its first company the game knows is
+    for (const auto& b : g_data.branches) {
       if (b.parent != g_data.cities[i].tok) continue;
       double c[3];
       if (game::CompanyCenter(Token(b.tok.c_str()), Token(b.parent.c_str()), c)) {
@@ -488,6 +493,31 @@ void PickLongestRoute() {
       }
     }
   }
+  return pts;
+}
+
+// Origin = the city nearest to the truck right now.
+void PickCurrentCity() {
+  SPF_TruckData td{};
+  if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
+  double metres = 0;
+  const int i = NearestPoint(CityPoints(), td.world_placement.position.x, td.world_placement.position.z, &metres);
+  if (i < 0) {
+    g_status = "Não consegui achar as cidades no jogo (precisa estar com o mapa carregado).";
+    g_status_error = true;
+    return;
+  }
+  const Named& city = g_data.cities[i];
+  g_src.country = city.parent, g_src.city = city.tok, g_src.filter[0] = 0;
+  char msg[200];
+  std::snprintf(msg, sizeof msg, "Origem: %s, a cidade mais próxima do caminhão (%.1f km no mapa).", city.name.c_str(), metres / 1000.0);
+  g_status = msg;
+  g_status_error = false;
+  Log(g_status);
+}
+
+void PickLongestRoute() {
+  const std::vector<MapPoint> pts = CityPoints();
   double metres = 0;
   const auto ends = FarthestPair(pts, &metres);
   if (ends.first < 0 || !SetCities(g_data.cities[ends.first].tok, g_data.cities[ends.second].tok)) {
@@ -547,6 +577,8 @@ void RunPending() {
     g_status_error = !ok;
   } else if (what == Pending::Longest) {
     PickLongestRoute();
+  } else if (what == Pending::CurrentCity) {
+    PickCurrentCity();
   } else if (what == Pending::Teleport) {
     Teleport();
   }
