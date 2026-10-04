@@ -48,6 +48,7 @@ bool g_morning = true;        // 07:00 and clear weather before the job is creat
 bool g_escort = true;         // police car of the origin country following the truck (see escort.h)
 bool g_escort_supported = false;
 bool g_escort_armed = false;  // a job we started is running
+bool g_escort_seen_job = false; // telemetry has reported that job (it lags the start by a few frames)
 float g_escort_from_km = 0;   // odometer when the job started
 std::string g_escort_model;
 escort::Car g_escort_car;
@@ -290,6 +291,7 @@ void ArmEscort() {
   if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
   g_escort_from_km = td.odometer;
   g_escort_armed = !g_escort_model.empty();
+  g_escort_seen_job = false;
   g_escort_car = {};
   g_escort_spawned = false;
   g_escort_wait = 0;
@@ -300,6 +302,8 @@ void UpdateEscort() {
   if (!g_escort_armed || !g_tel) return;
   SPF_JobData jd{};
   g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
+  if (jd.on_job) g_escort_seen_job = true;
+  else if (!g_escort_seen_job) return; // the job we just started has not reached telemetry yet
   if (!jd.on_job || !g_escort || !g_escort_supported) { // job over (or option turned off): hand the car back
     if (g_escort_car.ptr) escort::Release(g_escort_car);
     g_escort_car = {};
