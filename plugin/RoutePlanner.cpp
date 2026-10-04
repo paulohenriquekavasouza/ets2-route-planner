@@ -56,6 +56,12 @@ int g_escort_wait = 0;        // frames until the next spawn attempt / until the
 bool g_escort_spawned = false; // a spawn was requested; find the car when g_escort_wait runs out
 escort::Vec g_escort_spawn_at;
 int g_escort_log = 0;
+std::vector<escort::Car> g_escort_all; // every car we spawned and have not deleted yet
+double g_escort_dist = 0, g_escort_ahead = 0;
+std::string g_escort_note = "aguardando um serviço iniciado pelo planejador";
+bool g_escort_force = false;   // panel: spawn now, ignoring the 500 m rule
+SPF_Window_Handle* g_escort_window = nullptr;
+std::atomic<bool> g_escort_toggle{false};
 int g_start_in = -1;          // frames until the job is created after the console commands (-1 = none)
 int g_teleport_in = -1;       // frames until the deferred teleport runs (-1 = none)
 int g_tp_check_in = -1;       // frames until the position after teleporting is logged
@@ -283,6 +289,8 @@ void FilterUnknownCargo() {
 }
 
 // ---- police escort (escort.h) ----
+int RemoveEscortCars();
+
 void ArmEscort() {
   const Named* city = Find(g_data.cities, g_src.city);
   const Named* country = city ? Find(g_data.countries, city->parent) : nullptr;
@@ -292,27 +300,38 @@ void ArmEscort() {
   g_escort_from_km = td.odometer;
   g_escort_armed = !g_escort_model.empty();
   g_escort_seen_job = false;
-  g_escort_car = {};
-  g_escort_spawned = false;
+  RemoveEscortCars(); // leftovers of a previous job
   g_escort_wait = 0;
+  g_escort_note = g_escort_armed ? "aguardando 500 m com o caminhão em movimento" : "sem modelo de polícia para o país de origem";
   Log("escolta: " + (g_escort_armed ? "armada, modelo " + g_escort_model : std::string("sem modelo de polícia para o país de origem")));
 }
 
+// Deletes every car we spawned (the one following and the ones we lost on the way).
+int RemoveEscortCars() {
+  int n = 0;
+  for (const auto& c : g_escort_all) n += escort::Remove(c);
+  g_escort_all.clear();
+  g_escort_car = {};
+  g_escort_spawned = false;
+  return n;
+}
+
 void UpdateEscort() {
-  if (!g_escort_armed || !g_tel) return;
+  if (!g_tel) return;
   SPF_JobData jd{};
   g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-  if (jd.on_job) g_escort_seen_job = true;
-  else if (!g_escort_seen_job) return; // the job we just started has not reached telemetry yet
-  if (!jd.on_job || !g_escort || !g_escort_supported) { // job over (or option turned off): hand the car back
-    if (g_escort_car.ptr) escort::Release(g_escort_car);
-    g_escort_car = {};
-    if (!jd.on_job) {
+  if (g_escort_armed) {
+    if (jd.on_job) g_escort_seen_job = true;
+    else if (g_escort_seen_job) { // delivered or cancelled: the escort goes away with the job
       g_escort_armed = false;
-      Log("escolta: serviço terminou, carro liberado");
+      const int n = RemoveEscortCars();
+      g_escort_note = "serviço terminou";
+      Log("escolta: serviço terminou, " + std::to_string(n) + " carro(s) excluído(s)");
+      return;
     }
-    return;
   }
+  if (!g_escort_supported || g_escort_model.empty()) return;
+  if (!g_escort && !g_escort_force && !g_escort_car.ptr) return;
   SPF_TruckData td{};
   g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
   const escort::Vec truck{td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z};
@@ -320,14 +339,14 @@ void UpdateEscort() {
   char line[256];
 
   if (g_escort_car.ptr) {
-    double dist = 0, ahead = 0;
-    if (escort::Follow(g_escort_car, truck, heading, td.speed, &dist, &ahead) == escort::State::Lost) {
-      std::snprintf(line, sizeof line, "escolta: perdida (dist %.0f m, à frente %.0f m); novo carro em breve", dist, ahead);
+    if (escort::Follow(g_escort_car, truck, heading, td.speed, &g_escort_dist, &g_escort_ahead) == escort::State::Lost) {
+      std::snprintf(line, sizeof line, "escolta: perdida (dist %.0f m, à frente %.0f m), carro excluído", g_escort_dist, g_escort_ahead);
       Log(line);
-      g_escort_car = {};
-      g_escort_wait = 180;
-    } else if (++g_escort_log % 300 == 0) {
-      std::snprintf(line, sizeof line, "escolta: seguindo, dist %.0f m, caminhão %.0f km/h", dist, td.speed * 3.6);
+      RemoveEscortCars();
+      g_escort_note = "carro perdido; outro em instantes";
+      g_escort_wait = 120;
+    } else if (++g_escort_log % 600 == 0) {
+      std::snprintf(line, sizeof line, "escolta: seguindo, dist %.0f m, caminhão %.0f km/h", g_escort_dist, td.speed * 3.6);
       Log(line);
     }
     return;
@@ -335,20 +354,83 @@ void UpdateEscort() {
   if (g_escort_wait > 0 && --g_escort_wait > 0) return;
   if (g_escort_spawned) { // the car asked for a moment ago should be in the traffic list now
     g_escort_spawned = false;
-    g_escort_car = escort::Find(g_escort_model.c_str(), g_escort_spawn_at, 120.0);
-    Log(g_escort_car.ptr ? "escolta: carro encontrado no tráfego, seguindo" : "escolta: o carro não apareceu no tráfego");
+    g_escort_car = escort::Find(g_escort_model.c_str(), g_escort_spawn_at, 150.0);
+    if (g_escort_car.ptr) g_escort_all.push_back(g_escort_car);
+    g_escort_note = g_escort_car.ptr ? "seguindo" : "o carro não apareceu no tráfego";
+    Log("escolta: " + g_escort_note);
     if (!g_escort_car.ptr) g_escort_wait = 300;
     return;
   }
-  if (td.odometer - g_escort_from_km < 0.5f || td.speed < 3.0f) return; // 500 m into the job, and moving
+  const bool due = g_escort_armed && g_escort_seen_job && td.odometer - g_escort_from_km >= 0.5f && td.speed >= 3.0f;
+  if (!due && !g_escort_force) {
+    if (g_escort_armed) g_escort_note = "aguardando 500 m com o caminhão em movimento";
+    return;
+  }
+  g_escort_force = false;
   const escort::Vec f = escort::Forward(heading);
   g_escort_spawn_at = {truck.x - f.x * escort::SPAWN_BEHIND, truck.y, truck.z - f.z * escort::SPAWN_BEHIND};
   const bool ok = escort::Spawn(g_escort_model.c_str(), g_escort_spawn_at, heading);
   std::snprintf(line, sizeof line, "escolta: spawn %s em [%.1f; %.1f; %.1f]: %s", g_escort_model.c_str(), g_escort_spawn_at.x, g_escort_spawn_at.y,
                 g_escort_spawn_at.z, ok ? "ok" : "falhou (motivo no game.log.txt)");
   Log(line);
+  g_escort_note = ok ? "carro pedido ao jogo" : "o jogo recusou o spawn aqui; nova tentativa em instantes";
   g_escort_spawned = ok;
-  g_escort_wait = ok ? 5 : 600;
+  g_escort_wait = ok ? 5 : 300;
+}
+
+// The F9 panel: what the escort is doing, and manual control over it.
+void DrawEscort(SPF_UI_API* ui, void*) {
+  std::lock_guard lock(g_mu);
+  DrawCursor(ui);
+  SPF_Font_Handle font = ui->UI_GetFont("rp_body");
+  if (font) ui->UI_PushFont(font);
+  char line[256];
+  if (!g_escort_supported) ui->UI_TextColored(0.9f, 0.3f, 0.25f, 1.0f, "Versão do jogo não reconhecida: escolta desligada.");
+  ui->UI_Checkbox("Escolta automática (500 m após iniciar o serviço)", &g_escort);
+  ui->UI_SeparatorText("Estado");
+  ui->UI_TextWrapped(("Situação: " + g_escort_note).c_str());
+  ui->UI_Text(("Modelo: " + (g_escort_model.empty() ? std::string("(nenhum; inicie um serviço pelo F8)") : g_escort_model)).c_str());
+  std::snprintf(line, sizeof line, "Carros criados e ainda no mundo: %d", static_cast<int>(g_escort_all.size()));
+  ui->UI_Text(line);
+
+  ui->UI_SeparatorText("Carro da escolta");
+  const escort::Info i = escort::Read(g_escort_car);
+  if (!i.valid) {
+    ui->UI_TextDisabled("Nenhum carro seguindo agora.");
+  } else {
+    std::snprintf(line, sizeof line, "%s  (id %u)", i.model, i.id);
+    ui->UI_Text(line);
+    std::snprintf(line, sizeof line, "Distância: %.0f m   %s", g_escort_dist, g_escort_ahead > 0 ? "(à frente do caminhão)" : "(atrás do caminhão)");
+    ui->UI_Text(line);
+    std::snprintf(line, sizeof line, "Velocidade: %.0f km/h   Limite dado: %.0f km/h   Alvo da IA: %.0f km/h", i.speed * 3.6, i.limit * 3.6, i.target * 3.6);
+    ui->UI_Text(line);
+    std::snprintf(line, sizeof line, "Posição: [%.1f; %.1f; %.1f]", i.pos.x, i.pos.y, i.pos.z);
+    ui->UI_Text(line);
+    std::snprintf(line, sizeof line, "Flags da IA: %016llX%s%s", static_cast<unsigned long long>(i.flags),
+                  i.flags & escort::FLAG_DEBUG_PAUSE ? "  [pausado]" : "", i.flags & escort::FLAG_REMOVE ? "  [sendo removido]" : "");
+    ui->UI_Text(line);
+  }
+
+  ui->UI_SeparatorText("Ações");
+  const bool can_spawn = g_escort_supported && !g_escort_model.empty() && !g_escort_spawned;
+  ui->UI_BeginDisabled(!can_spawn);
+  if (ui->UI_Button(i.valid ? "Trocar por um carro novo" : "Criar carro agora", -1, 0)) {
+    RemoveEscortCars();
+    g_escort_force = true;
+    g_escort_wait = 0;
+    g_escort_note = "criando carro a pedido";
+  }
+  ui->UI_EndDisabled();
+  ui->UI_BeginDisabled(g_escort_all.empty());
+  if (ui->UI_Button("Excluir carro(s) da escolta", -1, 0)) {
+    const int n = RemoveEscortCars();
+    g_escort_wait = 600; // give the player ~10 s before the automatic escort tries again
+    g_escort_note = std::to_string(n) + " carro(s) excluído(s)";
+    Log("escolta: " + g_escort_note + " pelo painel");
+  }
+  ui->UI_EndDisabled();
+  ui->UI_TextDisabled("F9 fecha");
+  if (font) ui->UI_PopFont();
 }
 
 std::string TruckPos() {
@@ -432,12 +514,15 @@ void RunPending() {
 }
 
 void OnToggleKey() { g_toggle = true; }
+void OnEscortKey() { g_escort_toggle = true; }
 
 void OnUpdate() {
   if (!g_core || !g_core->ui || !g_window) return;
   SPF_UI_API* ui = g_core->ui;
   if (g_toggle.exchange(false)) ui->UI_SetVisibility(g_window, !ui->UI_IsVisible(g_window));
-  const bool open = ui->UI_IsVisible(g_window); // Esc in SPF can also close it
+  if (g_escort_window && g_escort_toggle.exchange(false)) ui->UI_SetVisibility(g_escort_window, !ui->UI_IsVisible(g_escort_window));
+  // Esc in SPF can also close them; the mouse is ours while either window is open
+  const bool open = ui->UI_IsVisible(g_window) || (g_escort_window && ui->UI_IsVisible(g_escort_window));
   if (open != g_mouse_taken) {
     SetMouseBlocked(ui, open);
     ui->UI_SetMouseOverride(open);
@@ -468,6 +553,9 @@ void OnRegisterUI(SPF_UI_API* ui) {
   ui->UI_RegisterDrawCallbackWithFlags(PLUGIN_NAME, "Planejador", Draw, nullptr, flags);
   g_window = ui->UI_GetWindowHandle(PLUGIN_NAME, "Planejador");
   if (g_window) ui->UI_SetVisibility(g_window, false);
+  ui->UI_RegisterDrawCallbackWithFlags(PLUGIN_NAME, "Escolta", DrawEscort, nullptr, flags);
+  g_escort_window = ui->UI_GetWindowHandle(PLUGIN_NAME, "Escolta");
+  if (g_escort_window) ui->UI_SetVisibility(g_escort_window, false);
   static bool fonts_requested = false;
   if (!fonts_requested) {
     fonts_requested = true;
@@ -490,9 +578,13 @@ void BuildManifest(SPF_Manifest_Builder_Handle* h, const SPF_Manifest_Builder_AP
   api->Policy_AddRequiredHook(h, "GameConsole"); // g_set_time / g_set_weather before starting a job
   api->Defaults_AddKeybind(h, "Routes", "toggle", "keyboard", "KEY_F8", "always");
   api->Meta_AddKeybind(h, "Routes", "toggle", "Abrir planejador", "Abre/fecha a janela de rotas.");
+  api->Defaults_AddKeybind(h, "Routes", "escort", "keyboard", "KEY_F9", "always");
+  api->Meta_AddKeybind(h, "Routes", "escort", "Painel da escolta", "Abre/fecha o painel do carro de polícia que acompanha o caminhão.");
   // name, visible, interactive, x, y, w, h, collapsed, autoscroll
   api->Defaults_AddWindow(h, "Planejador", false, true, 560, 120, 520, 760, false, false);
   api->Meta_AddWindow(h, "Planejador", "Planejador de rotas", "Origem, destino, carga e o serviço atual.");
+  api->Defaults_AddWindow(h, "Escolta", false, true, 24, 120, 500, 430, false, false);
+  api->Meta_AddWindow(h, "Escolta", "Escolta policial", "Dados e controle do carro de polícia que acompanha o caminhão.");
 }
 
 void OnLoad(const SPF_Load_API* load) {
@@ -503,7 +595,10 @@ void OnActivated(const SPF_Core_API* core) {
   g_core = core;
   if (core->telemetry) g_tel = core->telemetry->Tel_GetContext(PLUGIN_NAME);
   if (core->keybinds)
-    if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) core->keybinds->Kbind_Register(keys, "Routes.toggle", OnToggleKey);
+    if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) {
+      core->keybinds->Kbind_Register(keys, "Routes.toggle", OnToggleKey);
+      core->keybinds->Kbind_Register(keys, "Routes.escort", OnEscortKey);
+    }
   g_loaded = LoadRoutes(PluginDir() + "routes.tsv", g_data);
   g_supported = game::Supported();
   g_escort_supported = g_supported && escort::Supported();
@@ -512,8 +607,8 @@ void OnActivated(const SPF_Core_API* core) {
 }
 
 void OnUnload() {
-  if (g_escort_car.ptr) escort::Release(g_escort_car); // don't leave the car with our speed limit
-  g_escort_car = {};
+  RemoveEscortCars(); // the cars only make sense while we steer them
+  g_escort_window = nullptr;
   g_escort_armed = false;
   if (g_core && g_core->ui && g_mouse_taken) {
     SetMouseBlocked(g_core->ui, false);

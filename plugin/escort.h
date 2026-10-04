@@ -18,8 +18,15 @@ namespace escort {
 constexpr uintptr_t TRAFFIC = 0x36ae728;
 constexpr uintptr_t SPAWN = 0x566960; // bool (traffic_mgr*, array_t<string_dyn_t>* args, placement*)
 constexpr unsigned char kSpawnSig[10] = {0x40, 0x55, 0x53, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8d};
+// How the game deletes an AI car (0x923951, "Removing AI crashed into debug-paused vehicle"):
+// 0xace9e0(vehicle+0x80), then flags (+0x4b8) |= bit 24. The traffic update drops it afterwards.
+constexpr uintptr_t DETACH = 0xace9e0;
+constexpr unsigned char kDetachSig[10] = {0x40, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xf9, 0x48};
+constexpr uint64_t FLAG_REMOVE = 1ull << 24;
+// `spawn vehicle` creates the car with bit 63 (debug_pause) set: it stands still until cleared.
+constexpr uint64_t FLAG_DEBUG_PAUSE = 1ull << 63;
 
-constexpr double SPAWN_BEHIND = 30.0; // m behind the truck's origin
+constexpr double SPAWN_BEHIND = 45.0; // m behind the truck's origin (truck + trailer are ~17 m)
 constexpr double GAP = 30.0;          // m we try to keep
 constexpr double LOST_DIST = 300.0;   // farther than this (or ahead of us) = respawn
 
@@ -33,7 +40,10 @@ struct Car {
   float saved_limit = 0;
 };
 
-inline bool Supported() { return std::memcmp(game::At<const void*>(SPAWN), kSpawnSig, sizeof kSpawnSig) == 0; }
+inline bool Supported() {
+  return std::memcmp(game::At<const void*>(SPAWN), kSpawnSig, sizeof kSpawnSig) == 0 &&
+         std::memcmp(game::At<const void*>(DETACH), kDetachSig, sizeof kDetachSig) == 0;
+}
 
 // Unit forward vector for an SCS heading (0..1; 0 = north = -Z, 0.25 = west = -X).
 inline Vec Forward(double heading) {
@@ -123,6 +133,51 @@ inline bool StillThere(const Car& c) {
   return false;
 }
 
+// What the panel shows. Speed: near the player the car has a physics body ([v+0x238], active when
+// byte +0x1c & 1) whose +0x70 is the real speed; otherwise +0x434 (target speed) is the speed.
+struct Info {
+  bool valid = false;
+  char model[64] = {};
+  uint32_t id = 0;
+  float speed = 0, limit = 0, target = 0;
+  uint64_t flags = 0;
+  Vec pos;
+};
+
+inline Info Read(const Car& c) {
+  Info i;
+  if (!StillThere(c)) return i;
+  __try {
+    const char* name = *reinterpret_cast<const char* const*>(c.ptr + 0x518);
+    if (name) strncpy_s(i.model, name, _TRUNCATE);
+    i.id = c.id;
+    i.limit = *reinterpret_cast<const float*>(c.ptr + 0x430);
+    i.target = *reinterpret_cast<const float*>(c.ptr + 0x434);
+    i.flags = *reinterpret_cast<const uint64_t*>(c.ptr + 0x4b8);
+    const uint8_t* phys = game::Ptr(c.ptr, 0x238);
+    i.speed = phys && (phys[0x1c] & 1) ? *reinterpret_cast<const float*>(phys + 0x70) : i.target;
+    i.pos = Position(c.ptr);
+    i.valid = true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    i.valid = false;
+  }
+  return i;
+}
+
+// Deletes the car from the world the way the game does. Returns false if it was already gone.
+inline bool Remove(const Car& c) {
+  if (!StillThere(c)) return false;
+  __try {
+    uint64_t* flags = reinterpret_cast<uint64_t*>(c.ptr + 0x4b8);
+    if (*flags & FLAG_REMOVE) return true;
+    game::At<void (*)(void*)>(DETACH)(c.ptr + 0x80);
+    *flags |= FLAG_REMOVE;
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // Speed the car should be allowed: ours, plus a correction that closes or opens the gap.
 inline float FollowSpeed(double truck_speed, double dist) {
   const double correction = std::clamp((dist - GAP) * 0.4, -6.0, 10.0);
@@ -141,6 +196,7 @@ inline State Follow(const Car& c, const Vec& truck, double heading, double truck
     *dist = std::sqrt(dx * dx + dz * dz);
     *ahead = dx * f.x + dz * f.z;
     if (*dist > LOST_DIST || *ahead > 10.0) return State::Lost;
+    *reinterpret_cast<uint64_t*>(c.ptr + 0x4b8) &= ~FLAG_DEBUG_PAUSE; // spawned paused; let it drive
     *reinterpret_cast<float*>(c.ptr + 0x430) = FollowSpeed(truck_speed, *dist);
     return State::Following;
   } __except (EXCEPTION_EXECUTE_HANDLER) {

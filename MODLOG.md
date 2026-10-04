@@ -306,3 +306,24 @@ atrás, na mesma velocidade.
   `back_escort_ws_position`, traffic_storage_escort_back.sii, flag "escort" = bit 8 de +0x4b8), mas
   segue trajetórias pré-definidas por rota.
 - NÃO testado no jogo.
+
+## v2.4.1 (2026-10-04) — escolta: destravar, excluir, painel F9
+- 1º teste: bug meu (telemetria `on_job` atrasa alguns quadros → escolta desarmava na hora; corrigido
+  com `g_escort_seen_job`). 2º teste: spawn ok ("carro encontrado no tráfego"), mas o carro NÃO anda e
+  a distância só cresce.
+- **Causa:** `spawn vehicle` cria o carro com **bit 63 (debug_pause)** em +0x4b8 (game.log:
+  "[traffic] Removing AI crashed into debug-paused vehicle"). `Follow` agora limpa o bit a cada quadro.
+- Às vezes o jogo recusa: "[traffic] Spawn error: access not allowed" + "Unable to spawn ... (spawning
+  failed at closest position ...)"; e o carro pode nascer À FRENTE (o spawn gruda na faixa mais próxima).
+  SPAWN_BEHIND 30 → 45 m; carro à frente continua contando como "perdido".
+- **Excluir veículo de IA** (de 0x923951): `0xace9e0(veh+0x80)` e `flags |= bit 24`; o tráfego o
+  descarta depois. `escort::Remove`. O plugin guarda todos os carros que criou (`g_escort_all`) e os
+  exclui quando: o carro é perdido, o serviço termina/é cancelado, um novo serviço começa, o plugin
+  descarrega, ou pelo painel.
+- **Painel "Escolta" (F9, ação `Routes.escort`)**: situação, modelo, nº de carros no mundo; do carro:
+  id, distância (à frente/atrás), velocidade real (física [+0x238]+0x70 se ativa, senão +0x434),
+  limite, alvo, posição, flags (com [pausado]/[sendo removido]); botões "Criar carro agora / Trocar
+  por um carro novo" e "Excluir carro(s) da escolta"; caixa da escolta automática.
+- Tecla e janela novas escritas à mão em `spfPlugins\RoutePlanner\config\settings.json` (gotcha do
+  SPF: não mescla manifesto novo em settings existente); cópia em `settings.json.bak-f9`.
+- NÃO testado no jogo. Giroflex continua pendente.
