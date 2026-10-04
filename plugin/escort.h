@@ -224,9 +224,10 @@ inline bool LightsOn(const Car& c, uint32_t mask) {
 struct Curve {
   uint8_t* item = nullptr;  // the junction curve under a position (never a plain road lane)
   uint8_t* owner = nullptr; // the traffic object (prefab) it belongs to
+  bool ai = true;           // false: the game lets no AI vehicle plan this curve (a turn only the player can take)
 };
 
-// The forceable curve at `p`: the one a vehicle standing there is driving. Empty on plain road.
+// The junction curve at `p`: the one a vehicle standing there is driving. Empty on plain road.
 // `why` (optional) gets how far the lookup went: 1 no traffic manager, 2 no map item there, 3 the item has
 // no traffic object, 4 no lane found, 5 a plain road lane, 6 no AI access, 7 a forceable curve, 9 exception;
 // `type` gets the lane's type id.
@@ -276,9 +277,10 @@ inline Curve CurveAt(const Vec& p, int* why = nullptr, int* type = nullptr) {
       if (kind != LANE_ROAD) {
         const uint64_t* access = reinterpret_cast<const uint64_t* (*)(void*)>(vt[8])(found.item);
         stage = 6;
+        out = {found.item, owner, false};
         if (access && (*access & AI_ACCESS)) {
           stage = 7;
-          out = {found.item, owner};
+          out.ai = true;
         }
       }
     }

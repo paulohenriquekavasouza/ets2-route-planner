@@ -613,7 +613,16 @@ void UpdateEscort() {
     Log(line);
     last_why = why, last_type = type;
   }
-  if (here.item) {
+  // A curve without AI access (the turn into a side street the traffic never takes) is only taken as ours
+  // after 10 m on it: crossing a junction, such curves are the nearest one for a moment all the time.
+  static uint8_t* closed_item = nullptr;
+  static double closed_from = 0;
+  bool usable = here.item != nullptr;
+  if (here.item && !here.ai) {
+    if (closed_item != here.item) closed_item = here.item, closed_from = g_escort_travel;
+    usable = g_escort_travel - closed_from >= 10.0;
+  }
+  if (usable) {
     const auto known = std::find_if(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
     if (known != g_escort_forced.end()) known->at_m = g_escort_travel; // still on it: the count to its release starts when we leave
     else if (g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
@@ -636,7 +645,8 @@ void UpdateEscort() {
       for (const auto& slot : g_escort_slots)
         if (const int r = slot.car.ptr ? escort::Replan(slot.car, here) : 0)
           Log(std::string("escolta (") + slot.label + (r > 0 ? "): ia sair por outro lado; plano refeito para a nossa curva" : "): falha ao refazer o plano"));
-      std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada (%d ativas)", static_cast<void*>(here.item), static_cast<int>(g_escort_forced.size()));
+      std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada%s (%d ativas)", static_cast<void*>(here.item),
+                    here.ai ? "" : " [sem acesso de IA: só pelo plano refeito]", static_cast<int>(g_escort_forced.size()));
       Log(line);
     }
   }

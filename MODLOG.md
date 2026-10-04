@@ -634,3 +634,12 @@ Não testado em jogo ainda (jogo fechado na hora).
   no pool do jogo (40 bytes cada, não devolvidos). Teste em `routes_test` com lista falsa.
 - Limites: carro logicamente em outra faixa de entrada (curva dele não é irmã) não é corrigido; se já entrou na curva errada, tarde demais.
 - Escrita em estrutura interna da IA, NÃO testada em jogo. Sondas: scratchpad plan2..5.py (layout acima).
+
+## escolta: entrar em rua cuja curva não tem acesso de IA (2026-10-04, núcleo)
+- "T" confirmado em jogo (log: "plano refeito para a nossa curva"). Falha nova: ao entrar numa rua a viatura não seguiu.
+  Log: 6 s seguidos de "etapa 6, tipo 0x600000" = curva sob o caminhão SEM acesso de IA (o tráfego nunca faz essa conversão);
+  nada era forçado nem refeito.
+- `CurveAt` agora devolve também essas curvas (`Curve::ai = false`). O plugin só as usa depois de 10 m seguidos na mesma
+  (em cruzamentos comuns elas aparecem por instantes como "a mais próxima"). Forçar não faz a IA escolhê-las (o pontuador
+  0x941310 rejeita por acesso antes de olhar o bit de forçada), mas marca as irmãs (bit 7), e é o `Replan` que põe a curva no plano.
+- Incerto: o que a IA faz ao fim de uma curva sem acesso (se a rua seguinte não tiver faixa de IA, a viatura pode parar/sumir → o plugin troca de carro). Não testado em jogo.
