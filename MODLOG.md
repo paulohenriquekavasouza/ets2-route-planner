@@ -349,3 +349,14 @@ atrás, na mesma velocidade.
 - 500 m → 250 m. Painel da escolta: F9 → **Home** (manifesto + settings.json à mão).
 - Riscos a observar: a IA "brigar" com o arrasto (tremedeira), o jogo fazer "revive" do carro para a
   faixa dele, altura errada em rampas. NÃO testado no jogo. Giroflex pendente.
+
+## v2.5.1 (2026-10-04) — jogo fechou ao "Recarregar Framework"
+- Sintoma: o processo saiu durante o `sdk reinit` (última linha do game.log), sem game.crash.txt novo,
+  sem dump e sem evento no Windows; o framework.log para no meio da inicialização dos keybinds
+  (provavelmente buffer não gravado).
+- Diferença para as recargas que funcionaram: havia um carro de escolta vivo e a v2.4.1 chamava
+  `escort::Remove` (0xace9e0 + bit 24) dentro do `OnUnload`. Hipótese (não confirmada): mexer no
+  tráfego no meio do reinit do SDK derruba o jogo. Agora o `OnUnload` não chama nada do jogo; os
+  carros ficam com a IA. Outra possibilidade em aberto: o corpo físico que alterei nos testes externos.
+- **Regra:** nunca chamar funções do jogo em OnUnload. Para trocar de versão com escolta ativa:
+  excluir os carros pelo painel (Home) ou cancelar o serviço antes de recarregar.

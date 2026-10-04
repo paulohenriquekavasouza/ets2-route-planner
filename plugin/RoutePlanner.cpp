@@ -618,7 +618,10 @@ void OnActivated(const SPF_Core_API* core) {
 }
 
 void OnUnload() {
-  RemoveEscortCars(); // the cars only make sense while we steer them
+  // No calls into the game from here: the unload runs inside the game's "sdk reinit", and deleting
+  // traffic cars at that point took the game down (MODLOG v2.5.1). The cars are left to the AI.
+  g_escort_all.clear();
+  g_escort_car = {};
   g_escort_window = nullptr;
   g_escort_armed = false;
   if (g_core && g_core->ui && g_mouse_taken) {
