@@ -307,3 +307,9 @@ Feedback: texto cortado ao lado dos combos; sem cursor com o F8; "Iniciar" deu
   Roda no OnUpdate porque consulta o jogo.
 - Testes novos em routes_test: ida e volta das favoritas, `FindOption`, `FarthestPair`.
 - NÃO testado no jogo.
+
+# ===== v2.4 (2026-10-04) =====
+- Usuário confirmou favoritas e maior rota ("funcionou"). Pedido extra antes de salvar: na aba Favoritas,
+  "Salvar o serviço atual" (ids da telemetria: source/destination city, cargo, companies) e "Salvar a rota
+  escolhida em Planejar" (`AddFavorite`). Esses dois botões NÃO foram testados no jogo antes da tag.
+- **v2.4.0**, tag `v2.4`, backup em `D:\Projetos\_backupsts2-routes2.4\` + `v2.4.zip`.

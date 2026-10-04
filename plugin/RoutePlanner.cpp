@@ -153,6 +153,8 @@ void SaveFavoritesFile() {
   if (!SaveFavorites(PluginDir() + "favorites.tsv", g_favorites)) Log("não consegui gravar favorites.tsv");
 }
 
+void AddFavorite(const Favorite& f);
+
 Favorite SelectedRoute() {
   const RouteOption& o = g_options[g_selected];
   return {g_src.city, g_dst.city, o.cargo, o.src_company, o.dst_company};
@@ -274,14 +276,7 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
       g_view = View::Favorites;
     }
   } else if (ui->UI_Button("Adicionar esta rota às favoritas", -1, 0)) {
-    const Favorite f = SelectedRoute();
-    const bool dup = std::find(g_favorites.begin(), g_favorites.end(), f) != g_favorites.end();
-    if (!dup) {
-      g_favorites.push_back(f);
-      SaveFavoritesFile();
-    }
-    g_status = dup ? "Essa rota já está nas favoritas." : "Rota adicionada às favoritas.";
-    g_status_error = false;
+    AddFavorite(SelectedRoute());
   }
   ui->UI_EndDisabled();
   if (g_editing >= 0 && ui->UI_Button("Cancelar edição", -1, 0)) {
@@ -291,7 +286,32 @@ void DrawCargo(SPF_UI_API* ui, bool on_job) {
 }
 
 // ---- favourites screen ----
+void AddFavorite(const Favorite& f) {
+  const bool dup = std::find(g_favorites.begin(), g_favorites.end(), f) != g_favorites.end();
+  if (!dup) {
+    g_favorites.push_back(f);
+    SaveFavoritesFile();
+  }
+  g_status = dup ? "Essa rota já está nas favoritas." : "Rota adicionada às favoritas.";
+  g_status_error = false;
+}
+
 void DrawFavorites(SPF_UI_API* ui, bool on_job) {
+  ui->UI_SeparatorText("Salvar como favorita");
+  ui->UI_BeginDisabled(!on_job);
+  if (ui->UI_Button("Salvar o serviço atual", -1, 0)) { // the job in progress, as the game reports it
+    SPF_JobConstants jc{};
+    g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+    AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
+  }
+  ui->UI_EndDisabled();
+  const bool picked = g_selected >= 0 && g_selected < static_cast<int>(g_options.size());
+  ui->UI_BeginDisabled(!picked);
+  if (ui->UI_Button("Salvar a rota escolhida em Planejar", -1, 0)) AddFavorite(SelectedRoute());
+  ui->UI_EndDisabled();
+  if (picked) {
+    ui->UI_TextDisabled((CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) + "  ·  " + CargoName(g_data, g_options[g_selected].cargo)).c_str());
+  }
   ui->UI_SeparatorText("Rotas favoritas");
   if (g_favorites.empty()) {
     ui->UI_TextWrapped("Nenhuma favorita ainda. Em \"Planejar\", escolha origem, destino e carga e use \"Adicionar esta rota às favoritas\".");
