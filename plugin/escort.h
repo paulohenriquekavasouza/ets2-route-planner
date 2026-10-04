@@ -404,12 +404,13 @@ inline Vec CarForward(const uint8_t* v) {
 }
 
 constexpr uint64_t FLAG_ALLOW_OVERTAKE = 1ull << 20;
+constexpr double LANE_APART = 2.2; // m off our path that means "another lane" (lanes are 3.5-4.5 m wide)
 constexpr float HOLD_LIMIT = 0.001f; // "stand still"; 0 or negative would mean "no limit"
 
 // One frame of escorting. Fills `place` (where the car is) and `want` (the speed asked of it).
 // False if the car is gone from traffic.
 inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double truck_heading, double truck_speed, double gap_target, double dt,
-                  double hint, Place* place, float* want) {
+                  double hint, Place* place, float* want, bool* changing) {
   if (!StillThere(c)) return false;
   __try {
     *place = Locate(trail, truck, truck_heading, Position(c.ptr), CarForward(c.ptr), hint);
@@ -429,16 +430,22 @@ inline bool Steer(const Car& c, const Trail& trail, const Vec& truck, double tru
         *reinterpret_cast<float*>(phys + 0xe8) = next;
       }
     }
-    // Our lane: on a road with several lanes the AI may sit in the one next to ours. Its lateral
-    // displacement (+0x460, metres, positive = to its right; the ets2-police "pull over") moves it onto
-    // our path without changing what the AI thinks its lane is. Only between 0.6 and 8 m off, facing our way.
+    // Our lane. The car drives its own lane like any AI car (it keeps to the lane's centre and reacts
+    // to the traffic in it) and is only moved sideways when it is really in another lane than the one
+    // we drove there: more than LANE_APART off our path, e.g. after we changed lanes. Then its lateral
+    // displacement (+0x460, metres, positive = to its right; the ets2-police "pull over") slides it
+    // across at lane-change pace until it is on our path, and is left alone again.
     float* displace = reinterpret_cast<float*>(c.ptr + 0x460);
     if (std::isfinite(*displace) && std::abs(*displace) < 12.0f) {
-      float goal = *displace;
-      if (place->on_trail && place->facing > 0.7 && std::abs(place->side) > 0.6 && std::abs(place->side) < 8.0)
-        goal = std::clamp(*displace + static_cast<float>(place->side), -7.0f, 7.0f);
-      const float step = static_cast<float>(1.2 * dt); // m/s sideways: a lane change, not a jump
-      *displace = goal > *displace ? std::min(goal, *displace + step) : std::max(goal, *displace - step);
+      const bool ours = place->on_trail && place->facing > 0.7 && std::abs(place->side) < 8.0;
+      if (!ours) *changing = false;
+      else if (std::abs(place->side) > LANE_APART) *changing = true;
+      else if (std::abs(place->side) < 0.4) *changing = false;
+      if (*changing) {
+        const float goal = std::clamp(*displace + static_cast<float>(place->side), -7.0f, 7.0f);
+        const float step = static_cast<float>(1.2 * dt); // m/s sideways
+        *displace = goal > *displace ? std::min(goal, *displace + step) : std::max(goal, *displace - step);
+      }
     }
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {

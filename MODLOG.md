@@ -533,3 +533,26 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   IA (+0x460; positivo = direita, o "encostar" do ets2-police) para `atual + side` (±7 m), a 1,2 m/s, quando o
   carro está no rastro, no mesmo sentido e entre 0,6 e 8 m de lado. A IA continua "achando" que está na faixa dela.
 - NÃO testado no jogo. Reiniciar o jogo antes (curvas da sessão anterior ficaram forçadas).
+
+## v2.7.0 (branch `escolta`, 2026-10-04) — recarga automática (hospedeira + núcleo); faixa só quando muda de verdade
+- v2.6.4 confirmado: "ficou legal, ele troca de faixa" (o deslocamento lateral +0x460 funciona com sinal
+  positivo = direita) e vira junto nos cruzamentos (curva forçada sem a 0x9452a0).
+- **Recarga automática** (pedido do usuário), mesmo esquema do ets2-police:
+  - `RoutePlanner.dll` = hospedeira (`plugin/Host.cpp`): manifesto, teclas, janelas, fonte; vigia
+    `core\RoutePlannerCore.dll` (a cada 30 quadros) e recarrega de uma cópia em `core\live\core-N.dll`.
+  - `core\RoutePlannerCore.dll` = núcleo (`plugin/Core.cpp`, ex-RoutePlanner.cpp): toda a lógica e o desenho.
+    Contrato em `plugin/core_api.h` (`Core_Init`, `CoreApi`, `CoreExports`).
+  - `Shutdown(game_calls_ok)`: na recarga a quente (quadro normal) o núcleo antigo exclui os carros da escolta e
+    libera as curvas forçadas; no descarregamento do framework (sdk reinit) NÃO chama o jogo.
+  - Bloqueio do mouse feito pela hospedeira (`CoreApi::SetMouseBlocked`): o SPF indexa o pedido pelo endereço de
+    retorno, e um pedido feito por um núcleo já descarregado nunca seria retirado.
+  - A pasta do plugin (routes.tsv, favorites.tsv) vem da hospedeira (`CoreApi::plugin_dir`); o núcleo roda de core\live.
+  - `deploy.ps1`: compila as duas, testa, gera routes.tsv, troca a hospedeira só se o hash mudou (avisa "HOST
+    CHANGED") e troca o núcleo por rename atômico → entra no jogo em ~1 s. O log mostra "núcleo #N (data hora)".
+  - Estado que se perde numa recarga do núcleo: seleção na tela, serviço "armado" para a escolta, carros da escolta.
+- **Faixa:** `Steer` só desliza o carro (+0x460) quando ele está em OUTRA faixa (> 2,2 m do nosso rastro,
+  `LANE_APART`), até chegar a < 0,4 m; depois não mexe mais. Dentro da faixa a IA segue normalmente (centro da
+  faixa, reage ao tráfego). Estado "trocando para a sua faixa" no painel.
+- Limite conhecido: deslocado de faixa, a IA "pensa" que ainda está na faixa original (reage ao tráfego DELA).
+  Troca de faixa lógica da IA (bits change_lane/lane_target de +0x4b8) não foi investigada.
+- NÃO testado no jogo. Primeira vez: "Recarregar Framework" (ou reiniciar) para a hospedeira nova entrar.
