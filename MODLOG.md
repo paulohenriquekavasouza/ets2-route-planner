@@ -650,3 +650,13 @@ Não testado em jogo ainda (jogo fechado na hora).
 - Agora: assim que sai do nosso caminho ela é freada (`escort::Hold`: limite 0,001 + desaceleração 6 m/s²); após 2,5 s
   vira `slot.parked` (parada ali, giroflex ligado) e o plugin tenta outra atrás do caminhão como antes. Quando uma
   nova é aceita, a parada é excluída; dispensar/terminar o serviço exclui as duas. Não testado em jogo.
+
+## escolta: viatura que não pôde seguir é esquecida, sem excluir (2026-10-04, núcleo)
+- Log do teste (caminhão parado em área sem IA): spawn a 40–80 m "ok" mas "não apareceu" (game.log: access not allowed),
+  a 90 m nascia na rua de onde viemos, andava até onde dava, parava, era trocada → ciclo a cada ~30 s.
+  (A 0x566960 devolve true mesmo com "access not allowed"; só a busca do carro revela a falha.)
+- Pedido: depois de parar no ponto máximo, não fazer mais nada com ela e deixá-la lá (esquecer, sem excluir).
+- Agora: ao não poder seguir (2,5 s fora do caminho, já freada por `Hold`) a viatura sai de `g_escort_all` e do slot:
+  o plugin nunca mais a toca nem exclui (fica parada: o limite 0,001 não é recalculado pelo jogo; o giroflex apaga).
+  `slot.left_behind`: a próxima viatura só é pedida no ponto mais perto (gap + 10 m), a cada ~5 s, em silêncio no log;
+  quando uma é aceita volta ao normal. Home/dispensar zera. Não testado em jogo.
