@@ -327,3 +327,25 @@ atrás, na mesma velocidade.
 - Tecla e janela novas escritas à mão em `spfPlugins\RoutePlanner\config\settings.json` (gotcha do
   SPF: não mescla manifesto novo em settings existente); cópia em `settings.json.bak-f9`.
 - NÃO testado no jogo. Giroflex continua pendente.
+
+## v2.5.0 (2026-10-04) — escolta conduzida pelo rastro do caminhão. EXPERIMENTAL
+- v2.4.1 confirmado: carro nasce e anda. Mas não segue (a IA escolhe a rota). Usuário quer escolta real.
+- **RE ao vivo (probe externo, carro de polícia id 14):**
+  - Carro parado: escrever veh+0x28 fica (5/5 leituras). Carro andando (física ativa): o jogo
+    reescreve veh+0x28 a partir do corpo físico em < 50 ms.
+  - Cópias da posição: `A=[phys+0x20]` em +0x10c e +0x12c; `B=[A+0xf8]` em +0xa0 e +0x150.
+    Escrever altura +2 m: **A+0x12c e B+0x150 movem o veículo**; A+0x10c e B+0xa0 não (passo anterior).
+    Depois o carro cai sozinho (gravidade) → a física segue viva.
+  - Layout de B (corpo rígido): +0x140 quaternion (x,y,z,w), +0x150 posição, +0x15c velocidade linear
+    (bate com phys+0x70), +0x168 velocidade angular; cópia anterior em +0x90/+0xa0/+0xd0.
+    A: +0x12c posição, +0x13c quaternion (w,x,y,z). Posições na origem da física, não do mundo.
+- **Plugin:** `escort::Trail` grava o caminho do caminhão (1 m entre pontos, 250 m, zera em teleporte);
+  `escort::Drive` leva o corpo do carro ao ponto do rastro GAP=30 m atrás: delta em x,z (máx. 1,5 m por
+  quadro) em B+0x150 e A+0x12c, orientação do rastro (heading+pitch) em B+0x140/A+0x13c, velocidade
+  linear = direção do rastro × velocidade do caminhão, angular 0; altura fica com a física. Também
+  escreve o limite da IA (+0x430) = velocidade do caminhão e limpa debug_pause. Perdido = sumiu ou
+  > 80 m do lugar. Sem corpo físico (longe) = a IA dirige.
+  Spawn agora no ponto do rastro 45 m atrás (cai na faixa que percorremos).
+- 500 m → 250 m. Painel da escolta: F9 → **Home** (manifesto + settings.json à mão).
+- Riscos a observar: a IA "brigar" com o arrasto (tremedeira), o jogo fazer "revive" do carro para a
+  faixa dele, altura errada em rampas. NÃO testado no jogo. Giroflex pendente.

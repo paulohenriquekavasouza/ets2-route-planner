@@ -24,10 +24,19 @@ int main() {
   assert(any.size() == 2 && any[0].off_market && any[0].src_company == "kaarfor" && any[0].dst_company == "tesco");
   assert(CargoMass(d, "apples") == 23000 && CargoMass(d, "beef") == 0); // mass column is optional
   assert(d.countries[0].parent == "traffic.passat_cc.pol_de");
-  // escort speed: matches the truck at the wanted gap, faster when far, slower when close, never negative
-  assert(escort::FollowSpeed(20, escort::GAP) == 20.0f && escort::FollowSpeed(20, 200) == 30.0f);
-  assert(escort::FollowSpeed(20, 5) == 14.0f && escort::FollowSpeed(2, 0) == 0.0f);
   assert(std::abs(escort::Forward(0.25).x + 1.0) < 1e-9 && std::abs(escort::Forward(0).z + 1.0) < 1e-9);
+  // trail: straight 40 m north then a point 10 m west; 30 m back from the end is on the first leg
+  escort::Trail trail;
+  for (int i = 0; i <= 40; ++i) trail.Add({{0, 0, -double(i)}, 0, 0});
+  for (int i = 1; i <= 10; ++i) trail.Add({{-double(i), 0, -40}, 0.25, 0});
+  escort::Sample at;
+  assert(trail.At(30, &at) && std::abs(at.p.x) < 1e-9 && std::abs(at.p.z + 20) < 1e-9 && at.heading == 0);
+  assert(trail.At(5, &at) && std::abs(at.p.x + 5) < 1e-9 && at.heading == 0.25 && !trail.At(60, &at));
+  trail.Add({{5000, 0, 5000}, 0, 0}); // teleport drops the old trail
+  assert(trail.pts.size() == 1);
+  float q[4];
+  escort::Orientation(0.25, 0, q); // 90 degrees left about +Y
+  assert(std::abs(q[0] - 0.70710678f) < 1e-5 && std::abs(q[2] - 0.70710678f) < 1e-5 && q[1] == 0 && q[3] == 0);
   static_assert(Token("a") == 11 && Token("0_") == 1 + 37 * 38);
   assert(Untoken(Token("gld_frm_grg")) == "gld_frm_grg");
   std::puts("routes_test ok");

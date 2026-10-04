@@ -12,6 +12,7 @@
 #include "game.h"
 
 #include <cmath>
+#include <deque>
 
 namespace escort {
 
@@ -27,8 +28,7 @@ constexpr uint64_t FLAG_REMOVE = 1ull << 24;
 constexpr uint64_t FLAG_DEBUG_PAUSE = 1ull << 63;
 
 constexpr double SPAWN_BEHIND = 45.0; // m behind the truck's origin (truck + trailer are ~17 m)
-constexpr double GAP = 30.0;          // m we try to keep
-constexpr double LOST_DIST = 300.0;   // farther than this (or ahead of us) = respawn
+constexpr double GAP = 30.0;          // m behind the truck along its trail
 
 struct Vec {
   double x = 0, y = 0, z = 0;
@@ -178,26 +178,104 @@ inline bool Remove(const Car& c) {
   }
 }
 
-// Speed the car should be allowed: ours, plus a correction that closes or opens the gap.
-inline float FollowSpeed(double truck_speed, double dist) {
-  const double correction = std::clamp((dist - GAP) * 0.4, -6.0, 10.0);
-  return static_cast<float>(std::max(0.0, truck_speed + correction));
+// ---- following the truck's own path ------------------------------------------------------------
+// An AI car picks its own way at every junction, so steering only its speed cannot make it follow.
+// Instead we record where the truck drove and carry the car along that trail, a fixed distance
+// behind. Live RE (MODLOG v2.5): near the player the car is a physics body and the game recomputes
+// vehicle+0x28 from it every tick, so the body is what we write:
+//   phys = [veh+0x238] (active when byte +0x1c & 1), A = [phys+0x20], B = [A+0xf8] (the rigid body)
+//   B+0x140 quaternion (x,y,z,w), B+0x150 position, B+0x15c linear velocity, B+0x168 angular velocity
+//   A+0x12c position, A+0x13c quaternion (w,x,y,z)        (B+0xa0 / A+0x10c are previous-step copies)
+// Body positions use the physics origin, not world coordinates, so we move the body by the same
+// delta that takes the vehicle's world position to the target. Height is left to the physics.
+
+struct Sample {
+  Vec p;
+  double heading = 0, pitch = 0; // SCS turns: heading 0..1, pitch +-0.25
+};
+
+struct Trail {
+  std::deque<Sample> pts; // oldest first
+  static constexpr double STEP = 1.0, KEEP = 250.0;
+
+  void Add(const Sample& s) {
+    if (!pts.empty()) {
+      const double dx = s.p.x - pts.back().p.x, dz = s.p.z - pts.back().p.z;
+      const double d2 = dx * dx + dz * dz;
+      if (d2 < STEP * STEP) return;
+      if (d2 > 50.0 * 50.0) pts.clear(); // teleported: the old trail leads nowhere
+    }
+    pts.push_back(s);
+    while (pts.size() > static_cast<size_t>(KEEP / STEP)) pts.pop_front();
+  }
+
+  // The point `behind` metres back along the trail from its newest point. False if the trail is shorter.
+  bool At(double behind, Sample* out) const {
+    double left = behind;
+    for (size_t i = pts.size(); i-- > 1;) {
+      const Sample &a = pts[i], &b = pts[i - 1];
+      const double dx = b.p.x - a.p.x, dy = b.p.y - a.p.y, dz = b.p.z - a.p.z;
+      const double len = std::sqrt(dx * dx + dz * dz);
+      if (len >= left) {
+        const double t = len > 0 ? left / len : 0;
+        *out = a;
+        out->p = {a.p.x + dx * t, a.p.y + dy * t, a.p.z + dz * t};
+        return true;
+      }
+      left -= len;
+    }
+    return false;
+  }
+};
+
+// Quaternion (w,x,y,z) for an SCS heading and pitch: yaw about +Y, then pitch about the local X.
+inline void Orientation(double heading, double pitch, float q[4]) {
+  const double y = heading * 3.141592653589793, p = pitch * 3.141592653589793; // half angles
+  const double cy = std::cos(y), sy = std::sin(y), cp = std::cos(p), sp = std::sin(p);
+  q[0] = static_cast<float>(cy * cp);
+  q[1] = static_cast<float>(cy * sp);
+  q[2] = static_cast<float>(sy * cp);
+  q[3] = static_cast<float>(-sy * sp);
 }
 
 enum class State { Following, Lost };
 
-// One frame of following. `dist` and `ahead` (m along our heading; positive = in front of us) are
-// filled for the log. Lost = gone from traffic, too far, or it ended up in front of us.
-inline State Follow(const Car& c, const Vec& truck, double heading, double truck_speed, double* dist, double* ahead) {
+constexpr double MAX_PULL = 1.5;   // m per frame the car may be moved towards its place on the trail
+constexpr double DRAG_LIMIT = 80.0; // farther than this from its place = lost
+
+// One frame: put the car at `target` (a trail point) moving at `speed` m/s. `off` gets how far it
+// was from its place. Returns Lost if it is gone, too far, or has no physics body to move.
+inline State Drive(const Car& c, const Sample& target, double speed, double* off) {
   if (!StillThere(c)) return State::Lost;
   __try {
-    const Vec p = Position(c.ptr), f = Forward(heading);
-    const double dx = p.x - truck.x, dz = p.z - truck.z;
-    *dist = std::sqrt(dx * dx + dz * dz);
-    *ahead = dx * f.x + dz * f.z;
-    if (*dist > LOST_DIST || *ahead > 10.0) return State::Lost;
-    *reinterpret_cast<uint64_t*>(c.ptr + 0x4b8) &= ~FLAG_DEBUG_PAUSE; // spawned paused; let it drive
-    *reinterpret_cast<float*>(c.ptr + 0x430) = FollowSpeed(truck_speed, *dist);
+    uint64_t* flags = reinterpret_cast<uint64_t*>(c.ptr + 0x4b8);
+    *flags &= ~FLAG_DEBUG_PAUSE; // spawned paused; let it live
+    *reinterpret_cast<float*>(c.ptr + 0x430) = static_cast<float>(speed); // keep the AI's own idea of speed in step
+    const Vec at = Position(c.ptr);
+    double dx = target.p.x - at.x, dz = target.p.z - at.z;
+    const double d = std::sqrt(dx * dx + dz * dz);
+    *off = d;
+    if (d > DRAG_LIMIT) return State::Lost;
+    uint8_t* const phys = game::Ptr(c.ptr, 0x238);
+    if (!phys || !(phys[0x1c] & 1)) return State::Following; // no body yet (far away): the AI drives it
+    uint8_t* const a = game::Ptr(phys, 0x20);
+    uint8_t* const b = a ? game::Ptr(a, 0xf8) : nullptr;
+    if (!b) return State::Following;
+    if (d > MAX_PULL) dx *= MAX_PULL / d, dz *= MAX_PULL / d;
+    float* bp = reinterpret_cast<float*>(b + 0x150);
+    float* ap = reinterpret_cast<float*>(a + 0x12c);
+    bp[0] += static_cast<float>(dx), bp[2] += static_cast<float>(dz);
+    ap[0] += static_cast<float>(dx), ap[2] += static_cast<float>(dz);
+    float q[4];
+    Orientation(target.heading, target.pitch, q);
+    float* bq = reinterpret_cast<float*>(b + 0x140); // x, y, z, w
+    bq[0] = q[1], bq[1] = q[2], bq[2] = q[3], bq[3] = q[0];
+    std::memcpy(a + 0x13c, q, sizeof q); // w, x, y, z
+    const Vec f = Forward(target.heading);
+    float* v = reinterpret_cast<float*>(b + 0x15c);
+    v[0] = static_cast<float>(f.x * speed), v[2] = static_cast<float>(f.z * speed);
+    float* w = reinterpret_cast<float*>(b + 0x168);
+    w[0] = w[1] = w[2] = 0;
     return State::Following;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return State::Lost;
