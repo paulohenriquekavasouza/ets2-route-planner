@@ -591,3 +591,17 @@ Problemas achados e o que foi feito:
   Só mexe em entradas com nome e faixa (+0x428); não foi verificado se reboques de IA estão na mesma lista.
 Não testado em jogo ainda (jogo fechado na hora).
 - Ajuste: a limpeza da faixa agora começa em `MIN_BEHIND` (18 m atrás do caminhão, logo após o reboque) em vez de 15 m antes do ponto de spawn.
+
+## escolta: curva forçada era solta cedo demais (2026-10-04, núcleo)
+- Pedido: a escolta NUNCA escolher outra direção num cruzamento.
+- **Causa achada no log:** a mesma curva aparecia "forçada (1 ativas)" de novo a cada ~0,3 s enquanto o caminhão
+  estava nela → `ReleaseCurves` soltava a curva a cada passo do hodômetro da telemetria (float; a conta
+  "andou gap+60 m" em km nunca valeu). Assim que o caminhão saía da curva ela era liberada, e a viatura
+  30 m atrás chegava num cruzamento livre e escolhia sozinha.
+- **Correção:** distância própria `g_escort_travel` (metros, somada da posição a cada quadro; salto > 50 m = teleporte).
+  A curva guarda `at_m` da ÚLTIMA vez que o caminhão esteve nela e só é solta depois de (maior distância da
+  escolta + 60 m); slot sem carro conta como gap + 60. A regra dos 250 m após iniciar serviço usa a mesma distância.
+- RE (para depois): o leitor dos bits é o virtual 0x94cf40/0x91edd3 (bit 6 → 0x10000, bit 7 → 0x20000 em out+0x10);
+  NÃO foi achado em que momento a IA escolhe a saída (se escolher antes de o caminhão entrar na curva, ainda erra).
+- Limite conhecido: só é forçada a entrada da faixa em que o caminhão passou; viatura logicamente em outra faixa
+  de entrada (pista múltipla) ainda escolhe sozinha. Não testado em jogo.

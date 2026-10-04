@@ -78,13 +78,17 @@ bool g_escort_lights = true;    // roof lights on (escort::LightsOn)
 int g_escort_lights_failed = 0; // calls that faulted: after a few we stop asking
 bool g_escort_armed = false;    // a job we started is running
 bool g_escort_seen_job = false; // telemetry has reported that job (it lags the start by a few frames)
-float g_escort_from_km = 0;     // odometer when the job started
+// Metres the truck has driven, summed here from its position every frame. The telemetry odometer is
+// a float whose steps let a forced curve go the moment the truck left it (log of 2026-10-04: the same
+// curve forced again every 0.3 s), before the escort 30 m behind got there.
+double g_escort_travel = 0;
+double g_escort_from_m = 0;     // g_escort_travel when the job started
 std::vector<escort::Car> g_escort_all; // every car we spawned and have not deleted yet
 escort::Trail g_escort_trail;   // where the truck has been
 // Junction curves the truck drove, forced so the escort takes the same way; released once it is through.
 struct ForcedCurve {
   escort::Curve curve;
-  double at_km; // odometer when the truck was on it
+  double at_m; // g_escort_travel when the truck was last on it
 };
 std::vector<ForcedCurve> g_escort_forced;
 std::string g_escort_note = "Home cria a escolta agora; num serviço iniciado pelo planejador ela vem após 250 m";
@@ -488,9 +492,9 @@ void FilterUnknownCargo() {
 std::vector<MapPoint> CityPoints();
 
 // Gives the junctions back to the game (everything we forced), or only the ones the escort is past.
-void ReleaseCurves(double now_km, double keep_km) {
+void ReleaseCurves(double now_m, double keep_m) {
   std::erase_if(g_escort_forced, [&](const ForcedCurve& f) {
-    if (keep_km > 0 && now_km - f.at_km < keep_km) return false;
+    if (keep_m > 0 && now_m - f.at_m < keep_m) return false;
     escort::ForceCurve(f.curve, false);
     return true;
   });
@@ -512,9 +516,7 @@ int RemoveEscortCars() {
 }
 
 void ArmEscort() {
-  SPF_TruckData td{};
-  if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
-  g_escort_from_km = td.odometer;
+  g_escort_from_m = g_escort_travel;
   g_escort_armed = true;
   g_escort_seen_job = false;
   g_escort_active = false;
@@ -580,6 +582,10 @@ void UpdateEscort() {
   char line[256];
   // no truck in the world yet (all zeros) or garbage: nothing below makes sense
   if (!std::isfinite(truck.x + truck.y + truck.z + heading) || (truck.x == 0 && truck.z == 0)) return;
+  static escort::Vec last = truck;
+  const double moved = std::hypot(truck.x - last.x, truck.z - last.z);
+  if (moved < 50.0) g_escort_travel += moved; // more than that in one frame is a teleport
+  last = truck;
 
   if (g_escort_armed) {
     if (jd.on_job) g_escort_seen_job = true;
@@ -592,7 +598,7 @@ void UpdateEscort() {
     }
   }
   if (g_escort_call.exchange(false)) CallEscort(truck); // Home, or the panel's button
-  else if (g_escort && g_escort_armed && g_escort_seen_job && !g_escort_active && td.odometer - g_escort_from_km >= 0.25f && td.speed >= 3.0f)
+  else if (g_escort && g_escort_armed && g_escort_seen_job && !g_escort_active && g_escort_travel - g_escort_from_m >= 250.0 && td.speed >= 3.0f)
     CallEscort(truck); // 250 m into the job, and moving
   g_escort_trail.Add({truck, heading}); // always: a trail already there lets the first car be born in our lane
   if (!g_escort_active) return;
@@ -608,16 +614,20 @@ void UpdateEscort() {
     last_why = why, last_type = type;
   }
   if (here.item) {
-    const bool known = std::any_of(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
-    if (!known && g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
-      g_escort_forced.push_back({here, td.odometer});
+    const auto known = std::find_if(g_escort_forced.begin(), g_escort_forced.end(), [&](const ForcedCurve& f) { return f.curve.item == here.item; });
+    if (known != g_escort_forced.end()) known->at_m = g_escort_travel; // still on it: the count to its release starts when we leave
+    else if (g_escort_forced.size() < 24 && escort::ForceCurve(here, true)) {
+      g_escort_forced.push_back({here, g_escort_travel});
       std::snprintf(line, sizeof line, "escolta: cruzamento, curva %p forçada (%d ativas)", static_cast<void*>(here.item), static_cast<int>(g_escort_forced.size()));
       Log(line);
     }
   }
   double farthest = 0;
   for (const auto& slot : g_escort_slots) farthest = std::max(farthest, std::max(slot.gap, slot.car.ptr ? slot.place.behind : 0.0));
-  ReleaseCurves(td.odometer, (farthest + 60.0) / 1000.0);
+  // a slot without a car counts from where the next one is born (up to gap + 60 m back)
+  for (const auto& slot : g_escort_slots)
+    if (!slot.car.ptr) farthest = std::max(farthest, slot.gap + 60.0);
+  ReleaseCurves(g_escort_travel, farthest + 60.0);
 
   for (auto& slot : g_escort_slots) {
     if (slot.car.ptr) {
