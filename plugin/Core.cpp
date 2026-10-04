@@ -568,8 +568,8 @@ void RunPending() {
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
-    if (ok) { // test of the game's own hint box: shown once the teleport and its parking brake hint are over
-      g_hint_text = "<color value=@@clr_sel@@>Serviço iniciado<br><color value=@@clr_txt@@>" + CargoName(g_data, o.cargo) + "<br>" + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) + (g_refuel ? "<br>Tanque cheio" : "");
+    if (ok) { // the game's own message box, once the teleport and its parking brake hint are over
+      g_hint_text = "<color value=@@clr_sel@@>Serviço iniciado<br><color value=@@clr_txt@@>" + CargoName(g_data, o.cargo) + "<br>" + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city) + (g_refuel ? "<br>Tanque cheio" : ""); // the game's font has no arrow glyph
       g_hint_in = 120;
     }
     if (ok && g_refuel) {

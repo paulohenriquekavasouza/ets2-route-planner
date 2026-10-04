@@ -398,3 +398,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     "Carro pronto" (0x68d4d0): tipo 2, prio 2, a 0, b 2, c 0xffff, sem chave.
   - `0x623970(fila, chave)` retira a mensagem com aquela chave (marca a expiração).
   - Plugin (teste): `game::ShowHint(texto)` com os valores do "carro pronto" e chave própria 0x52504c; `HideHint()` após ~10 s. Não testado em jogo.
+
+## v2.6.0 (master, 2026-10-04) — mensagem na caixa de aviso do jogo ao iniciar o serviço
+- Confirmado em jogo: a mensagem aparece na caixa do conselheiro (título laranja, 3 linhas, acentos ok, ícone de sino do tipo 2)
+  e é retirada após ~10 s. A seta "→" saía como "?" (a fonte do jogo não tem o glifo) → trocada por "->".
+- Sobre a 2.5.1: `game::ShowHint/HideHint` (fila do conselheiro, 0x623a80 / 0x623970) e a mensagem "Serviço iniciado".
