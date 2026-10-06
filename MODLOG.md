@@ -415,3 +415,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Hospedeira: janela sem barra de título, tamanho automático, sem barra de rolagem; fontes novas `rp_small` (14) e `rp_title` (24).
   → precisa "Recarregar Framework". `SameLine(offset)` conta da borda da janela (ou do início do grupo), não do padding.
 - Compila; aparência NÃO vista em jogo ainda.
+
+## v2.7.0 (master, 2026-10-05) — interface nova
+- Visto em jogo (captura do usuário, ainda com a hospedeira antiga): tema, cartões, abas e tabela ok; sobrava um espaço grande à
+  direita (janela antiga de 1030 px, redimensionável) e as caixas de marcação ficavam azuis (o checkbox do SPF não segue FRAME_BG).
+- Correções: o núcleo ajusta a janela ao conteúdo a cada quadro (`UI_SetWindowSize(kW + 2·margem, fim do conteúdo, ALWAYS)`),
+  valendo também com hospedeira antiga; caixa de marcação própria `Check` (âmbar com tique escuro / cinza), desenhada com o draw list.
+- Com a hospedeira nova: sem barra de título, fontes `rp_small` e `rp_title`. Essas duas correções não foram vistas em jogo antes de salvar.

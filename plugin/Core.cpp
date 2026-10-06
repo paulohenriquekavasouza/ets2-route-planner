@@ -228,6 +228,26 @@ bool Primary(SPF_UI_API* ui, const char* label, float w, float h = 0) {
 }
 bool Tab(SPF_UI_API* ui, const char* label, bool active, float w) { return active ? Primary(ui, label, w, 34) : ui->UI_Button(label, w, 34); }
 
+// The game's tick box: amber with a dark tick when on, a grey box when off. (SPF's own checkbox keeps its blue frame.)
+bool Check(SPF_UI_API* ui, const char* label, bool* v) {
+  const float box = 22.0f, h = ui->UI_GetFrameHeight();
+  float x, y, tw, th;
+  ui->UI_GetCursorScreenPos(&x, &y);
+  ui->UI_CalcTextSize(label, &tw, &th);
+  const bool pressed = ui->UI_InvisibleButton(label, box + 8 + tw, h);
+  if (pressed) *v = !*v;
+  const bool hot = ui->UI_IsItemHovered(SPF_HoveredFlags{});
+  const SPF_DrawList_Handle dl = ui->UI_GetWindowDrawList();
+  const float by = y + (h - box) / 2;
+  ui->UI_DrawList_AddRectFilled(dl, x, by, x + box, by + box, U32(ui, *v ? (hot ? kAmberHover : kAmber) : (hot ? kFieldHover : kField)), 4.0f, SPF_DrawFlags{});
+  if (*v) {
+    ui->UI_DrawList_AddLine(dl, x + 5, by + 11.5f, x + 9.5f, by + 16, U32(ui, kInk), 2.5f);
+    ui->UI_DrawList_AddLine(dl, x + 9.5f, by + 16, x + 17, by + 6.5f, U32(ui, kInk), 2.5f);
+  }
+  ui->UI_DrawList_AddText(dl, x + box + 8, y + (h - th) / 2, U32(ui, kText), label);
+  return pressed;
+}
+
 // A card: a rounded block with a caption, as tall as what is put in it. The block is painted with the
 // height measured on the previous frame (ponytail: one frame late when the content changes height;
 // the alternative is draw-list channels or fixed heights).
@@ -442,7 +462,7 @@ void DrawCargo(SPF_UI_API* ui) {
     ui->UI_SetNextItemWidth(card.inner() - 190);
     ui->UI_InputTextWithHint("##cargo_filter", "Buscar carga ou empresa…", g_cargo_filter, sizeof g_cargo_filter, SPF_InputTextFlags{});
     ui->UI_SameLine(0, -1);
-    ui->UI_Checkbox("Qualquer carga", &g_any_cargo);
+    Check(ui, "Qualquer carga", &g_any_cargo);
     if (ui->UI_IsItemHovered(SPF_HoveredFlags{})) ui->UI_SetTooltip("Lista todas as cargas, mesmo as que essas empresas não negociam.");
     if (g_cargo_pending) note = "Consultando o jogo…";
     else if (g_options.empty()) note = g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas duas cidades. Marque \"Qualquer carga\".";
@@ -487,12 +507,12 @@ void DrawCargo(SPF_UI_API* ui) {
 void DrawStartOptions(SPF_UI_API* ui) {
   const Card card = BeginCard(ui, "opts", "AO INICIAR O SERVIÇO");
   const float second = card.inner() / 2; // SameLine counts from the start of the card's group
-  ui->UI_Checkbox("Teleportar até a empresa de origem", &g_teleport);
+  Check(ui, "Teleportar até a empresa de origem", &g_teleport);
   ui->UI_SameLine(second, -1);
-  ui->UI_Checkbox("Soltar o freio de mão", &g_release_brake);
-  ui->UI_Checkbox("7h da manhã e tempo limpo", &g_morning);
+  Check(ui, "Soltar o freio de mão", &g_release_brake);
+  Check(ui, "7h da manhã e tempo limpo", &g_morning);
   ui->UI_SameLine(second, -1);
-  ui->UI_Checkbox("Abastecer o caminhão", &g_refuel);
+  Check(ui, "Abastecer o caminhão", &g_refuel);
   EndCard(ui, card);
 }
 
@@ -605,6 +625,8 @@ void DrawCursor(SPF_UI_API* ui) { // SPF only shows a cursor for its own windows
   ui->UI_DrawList_AddTriangle(fg, mx, my, mx, my + 19, mx + 13, my + 13, ui->UI_ColorConvertFloat4ToU32(0, 0, 0, 1), 1.5f);
 }
 
+void DrawBody(SPF_UI_API* ui);
+
 void Draw(SPF_UI_API* ui, void*) {
   std::lock_guard lock(g_mu);
   DrawCursor(ui);
@@ -614,7 +636,17 @@ void Draw(SPF_UI_API* ui, void*) {
   ui->UI_GetWindowPos(&wx, &wy);
   ui->UI_GetWindowSize(&ww, &wh);
   ui->UI_DrawList_AddRectFilled(ui->UI_GetWindowDrawList(), wx, wy, wx + ww, wy + wh, U32(ui, kBg), 8.0f, SPF_DrawFlags{}); // over SPF's own window colour
+  float left, top;
+  ui->UI_GetCursorScreenPos(&left, &top);
   DrawHeader(ui);
+  DrawBody(ui);
+  // The window hugs its content (also with a host that still has the old resizable window).
+  float ex, ey;
+  ui->UI_GetCursorScreenPos(&ex, &ey);
+  ui->UI_SetWindowSize(kW + 2 * (left - wx), ey - wy + 4, SPF_COND_ALWAYS);
+}
+
+void DrawBody(SPF_UI_API* ui) {
   if (!g_loaded) {
     Wrapped(ui, kRed, "routes.tsv não encontrado ao lado da DLL. Rode o deploy.ps1 (ele gera o arquivo a partir dos dados do jogo).", kW);
     return;
