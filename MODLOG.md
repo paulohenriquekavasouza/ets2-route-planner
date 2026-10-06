@@ -519,3 +519,17 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - NÃO testado em jogo.
 - A janela antiga passou a ser fechada 3 quadros depois (pedido do usuário após testar com 2). Salva como v3.1.
 - Depois da v3.1 (sem tag): a janela antiga passou a ser fechada 5 e depois 4 quadros depois (pedidos do usuário); fica em 4.
+
+## EXPERIMENTO: pré-visualização da rota no mapa do jogo (2026-10-06, após a v3.1, sem tag)
+- Pedido: ver a rota escolhida no mapa do jogo, como o GPS a traçaria, numa janela navegável. Em etapas, como a tela nativa.
+- **O que o jogo tem (scripts em /ui):** widgets de mapa prontos, usados em janelas SEM handler embutidas por `child_path`:
+  `ui_world_map` (/ui/world_map_map.sii; `show_country_names`, `zoom_allowed: true`, `map_config_path`), `ui_job_map`
+  (/ui/map_view_detail.sii e mais 11 telas; é o mapa ao lado de uma oferta de carga, que mostra a rota do serviço) e `ui_map`.
+  Todos com `id: 100000`.
+- **RE do handler de oferta (`job_detail_hdl`, funções 0x105e880..0x1063a60):** acha o mapa com
+  `0x385bf0(janela, 100000)` → `[widget+0x98]` (janela filha) → `0x385bf0(filha, 100000)`. No mapa: `+0x1e8` = nível de zoom,
+  `+0x888` = estado, `+0x88c` = máscara do que é desenhado, `+0x894` = byte de modo; `0x1015140(mapa, widget|0)`,
+  `0x1012d10(mapa, 1)`, `0x1000a60(mapa)`; `0x1063a60(handler)` (996 bytes) prepara o mapa para a oferta. AINDA NÃO achado: a chamada
+  que entrega origem/destino (a rota) ao mapa.
+- **Etapa 1 (plugin):** página "Mapa" na tela nativa (botão "Ver no mapa (experimento)" no cartão ROTA) com um dos três widgets, trocável
+  por botões, para descobrir se desenham e aceitam arrastar/zoom sem handler. NÃO testado em jogo.

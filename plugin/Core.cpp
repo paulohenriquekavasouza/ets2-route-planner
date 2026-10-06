@@ -863,7 +863,8 @@ void* g_native_window = nullptr;
 bool g_native_paused = false; // we paused the game for the window (its cursor only exists while paused)
 std::atomic<bool> g_native_toggle{false};
 
-enum class NativePage { Planner, Favorites, Place, Cargo };
+enum class NativePage { Planner, Favorites, Place, Cargo, Map };
+int g_native_map_kind = 0; // EXPERIMENT (route preview, stage 1): which of the game's map widgets the map page shows
 NativePage g_native_page = NativePage::Planner;
 bool g_native_src = true;     // which side the place page fills
 int g_native_list_page = 0;   // page of a paged list
@@ -1137,6 +1138,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Usar a cidade atual", kX1 + kNPad, top - 148, bw, [] { PickCurrentCity(); });
   NativePlaceButton(ui, "DESTINO", g_dst, false, kX1 + kNPad, top - 206, bw);
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
+  ui.TextButton("Ver no mapa (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1395,6 +1397,19 @@ void NativeCargoPage(NativeUi& ui) {
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
 }
 
+// EXPERIMENT, stage 1 of the route preview: one of the game's own map widgets inside our window, to
+// learn whether it draws and lets itself be dragged and zoomed without the handler class the game's
+// map screens have. The three classes come from the game's scripts: ui_world_map (the full map screen,
+// /ui/world_map_map.sii), ui_job_map (the map beside a job offer, /ui/map_view_detail.sii) and ui_map.
+void NativeMapPage(NativeUi& ui) {
+  static const char* const kinds[] = {"ui_world_map", "ui_job_map", "ui_map"};
+  g_native_map_kind = std::clamp(g_native_map_kind, 0, 2);
+  ui.Title(std::string("MAPA DO JOGO  -  ") + kinds[g_native_map_kind], 90, 772, 1260, 30, kNFontBold, kNAmber);
+  ui.Node(kinds[g_native_map_kind], " show_country_names: true\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
+  ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
+  for (int i = 0; i < 3; ++i) ui.TextButton(kinds[i], kX1 + 400 + i * 190, 96, 180, [i] { g_native_map_kind = i; }, g_native_map_kind == i);
+}
+
 void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
   const int top = kCardTop, h = 610, w = 1260;
   ui.Card("ROTAS FAVORITAS", kX1, top, w, h);
@@ -1520,7 +1535,7 @@ bool WriteNativeScript() {
   ui.Node("ui::text_common", " value: \"@@clr_bg_main@@\"\n look_template: txt.window.bcg_rect4\n text: \"\"\n", 40, 860, 1360, 820, 0, 1);
   ui.Node("ui::text_common", " value: \"@@ui_paused@@\"\n look_template: txt.big.left\n text: \"\"\n", 60, 850, 300, 30, 0, 5);
   ui.Node("ui::text_common", " value: \"PLANEJADOR DE ROTAS\"\n look_template: txt.big.center\n text: \"\"\n", 420, 850, 600, 30, 0, 5);
-  const bool sub_page = g_native_page == NativePage::Place || g_native_page == NativePage::Cargo;
+  const bool sub_page = g_native_page == NativePage::Place || g_native_page == NativePage::Cargo || g_native_page == NativePage::Map;
   if (!sub_page) {
     const bool planner = g_native_page == NativePage::Planner;
     ui.TextButton("Planejar", 495, 816, 220, [] { NativeGoTo(NativePage::Planner); }, planner, 42);
@@ -1531,6 +1546,7 @@ bool WriteNativeScript() {
     case NativePage::Favorites: NativeFavoritesPage(ui, jd); break;
     case NativePage::Place: NativePlacePage(ui); break;
     case NativePage::Cargo: NativeCargoPage(ui); break;
+    case NativePage::Map: NativeMapPage(ui); break;
   }
   if (!sub_page) {
     if (!g_status.empty()) ui.Title(Shorten(g_status, 130), 90, 132, 1260, 24, kNFontSmall, g_status_error ? kNAmber : kNDim);
