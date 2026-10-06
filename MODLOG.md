@@ -504,3 +504,6 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   jogo; checkbox do jogo nas opções; roda do mouse vira páginas; Esc ou Home fecham. O F8 (ImGui) continua igual.
 - Confirmado em jogo pelo usuário: abrir/fechar, cliques, iniciar serviço, visual, "Qualquer carga" só na página de cargas.
   Não confirmado explicitamente: roda do mouse com o gancho novo.
+
+## v3.0.1 (master, 2026-10-05, ainda sem tag)
+- Tela nativa: sem o texto "Esc fecha" (o Esc continua fechando), sem o rótulo "trocar" nos botões de origem/destino, "Outras empresas" virou "Mudar empresas (N)".

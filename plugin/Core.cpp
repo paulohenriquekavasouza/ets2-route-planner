@@ -1101,7 +1101,7 @@ void NativePlaceButton(NativeUi& ui, const char* label, Side& side, bool src, in
   const std::string content =
       city.empty() ? Layers({country ? At(14, 14) + Flag(country->parent, 45, 30) : std::string(), LeftText(country ? "Escolher a cidade" : "Escolher o local", country ? 74 : 18, kNFontBold)})
                    : Layers({At(14, 14) + Flag(CityFlag(side.city), 45, 30), At(74, 6) + Styled(Shorten(city, 24), kNFontBold, kNWhite),
-                             At(74, 32) + Styled(country ? country->name : std::string(), kNFontSmall, kNDim), RightText("trocar")});
+                             At(74, 32) + Styled(country ? country->name : std::string(), kNFontSmall, kNDim)});
   ui.Button(content, x, y - 26, w, 58, [src] {
     g_native_src = src;
     NativeGoTo(NativePage::Place);
@@ -1141,7 +1141,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
     int same = 0;
     for (const auto& other : g_options) same += other.cargo == o.cargo;
     if (same > 1)
-      ui.TextButton("Outras empresas (" + std::to_string(same) + ")", kX2 + kNPad, bottom + 88, bw, [cargo = o.cargo] {
+      ui.TextButton("Mudar empresas (" + std::to_string(same) + ")", kX2 + kNPad, bottom + 88, bw, [cargo = o.cargo] {
         for (int n = 1; n <= static_cast<int>(g_options.size()); ++n) { // the next pair of companies carrying the same cargo
           const int i = (g_selected + n) % static_cast<int>(g_options.size());
           if (g_options[i].cargo == cargo) {
@@ -1435,7 +1435,6 @@ bool WriteNativeScript() {
   ui.Node("ui::text_common", " value: \"@@clr_bg_main@@\"\n look_template: txt.window.bcg_rect4\n text: \"\"\n", 40, 860, 1360, 820, 0, 1);
   ui.Node("ui::text_common", " value: \"@@ui_paused@@\"\n look_template: txt.big.left\n text: \"\"\n", 60, 850, 300, 30, 0, 5);
   ui.Node("ui::text_common", " value: \"PLANEJADOR DE ROTAS\"\n look_template: txt.big.center\n text: \"\"\n", 420, 850, 600, 30, 0, 5);
-  ui.Draw(RightText("Esc fecha", kNFont, kNDim), 1080, 850, 300, 30);
   const bool sub_page = g_native_page == NativePage::Place || g_native_page == NativePage::Cargo;
   if (!sub_page) {
     const bool planner = g_native_page == NativePage::Planner;
