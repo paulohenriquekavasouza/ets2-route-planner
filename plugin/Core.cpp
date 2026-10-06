@@ -1727,7 +1727,8 @@ bool ShowNative() {
   // a map without a zoom level takes the game down when it is drawn (game.h): set it before this frame is rendered
   if (why == 0 && g_native_page == NativePage::Map) {
     const int zoom = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom);
-    Log("mapa: zoom inicial " + std::to_string(zoom));
+    const bool nav = zoom >= 0 && game::AttachMapNavigation(g_native_window, 100000); // so that it draws the GPS route
+    Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada ao mapa" : ", NÃO consegui ligar a navegação ao mapa"));
     g_native_map_probe = 90;
     if (zoom < 0) { // not safe to show: take it down before anything draws it
       game::CloseGameWindow(&g_native_window);

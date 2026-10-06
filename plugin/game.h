@@ -669,6 +669,36 @@ inline bool GameWindowOpen(const char* name) {
   return false;
 }
 
+// A map widget only draws the GPS route when it has been told where the navigation is: the game's own
+// screens hand it the navigation object, game+0x4128 (the same one the GPS waypoints go to), right
+// after creating it. From the set-up of the game's maps (0x54a2a9, and the job offer's at 0x105f426):
+//   [map+0xb0] = nav;  0x100e9b0(map, 0.0f);  0x10012e0(map, true);  0x10009d0(map, nav);  0x1000a60(map);
+// 0x10009d0 also stores nav at +0xb8 and resets the route the widget holds (+0x540, +0x568, +0x6d8...).
+// In a widget of ours +0xb8 was null (compared with the real map's memory, 2026-10-06).
+constexpr uintptr_t MAP_VIEW = 0x100e9b0, MAP_FOLLOW = 0x10012e0, MAP_SET_NAV = 0x10009d0, MAP_PREPARE = 0x1000a60;
+constexpr Sig kMapNavSigs[] = {
+    {MAP_VIEW, {0x40, 0x57, 0x48, 0x83, 0xec, 0x70, 0x48, 0x8b, 0x81, 0x40}},    {MAP_FOLLOW, {0x40, 0x55, 0x53, 0x57, 0x48, 0x8d, 0x6c, 0x24, 0xb9, 0x48}},
+    {MAP_SET_NAV, {0x48, 0x83, 0xec, 0x48, 0x33, 0xc0, 0x48, 0xc7, 0x44, 0x24}}, {MAP_PREPARE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
+};
+inline bool AttachMapNavigation(void* window, uint32_t id) {
+  for (const Sig& s : kMapNavSigs)
+    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
+  __try {
+    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    uint8_t* const game = *At<uint8_t**>(ACTOR_OWNER);
+    if (!map || !game) return false;
+    uint8_t* const nav = game + 0x4128;
+    *reinterpret_cast<uint8_t**>(map + 0xb0) = nav;
+    At<void (*)(void*, float)>(MAP_VIEW)(map, 0.0f);
+    At<void (*)(void*, bool)>(MAP_FOLLOW)(map, true);
+    At<void (*)(void*, void*)>(MAP_SET_NAV)(map, nav);
+    At<void (*)(void*)>(MAP_PREPARE)(map);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // DIAGNOSTICS for the map experiment: the raw bytes of a map widget, to compare the one of the game's
 // own map screen (which draws the GPS route) with the one inside our window (which does not).
 // The game's screen: window "world_map" -> ui::portal id 100000 -> its child window (+0x98) -> map id 100000.

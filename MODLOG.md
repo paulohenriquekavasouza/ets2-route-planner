@@ -591,3 +591,14 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   vinha de reabrir o planejador (e pausar) com a tela do desktop ainda saindo: novo estágio `Closing` espera os 4 contadores de pausa
   (`game::PauseCounters`) voltarem ao valor de antes do mapa por 250 ms (máx. 5 s) antes de reabrir. Os dois botões ficaram no cartão ROTA:
   "Ver a rota no mapa do jogo" e "Mapa na janela (experimento)". NÃO testado em jogo.
+- **Etapa 3, 2º teste:** mesmo esperando os contadores de pausa, o planejador voltou com o mundo preto depois da tela de mapa do jogo
+  (o usuário reiniciou o jogo). Caminho abandonado de vez (botão ainda existe); segue-se o widget dentro da nossa janela.
+- **Widget embutido, o que faltava (RE, 2026-10-06):**
+  - As flags `+0x888` vêm de uma tabela por NÍVEL DE ZOOM em `[[exe+0x36ae6d8]+0x98]+0x178` (lida ao vivo: 685fff, 685fff, 685f7f, 685f7f,
+    685faf, 685f27, **685407** (nível 6), **481402** (nível 7)); a diferença vista entre os dois dumps era só o nível. Setter:
+    `0x10017d0(mapa, flags)`. `0xffee60(mapa, bits)` reconstrói o conteúdo (bit 0 estradas, bit 1 zera as listas +0x3c0/+0x410…).
+    Cor da rota em `[mapa+0x21c]` (0xff0c0ccf).
+  - **O mapa precisa receber o objeto de navegação** `nav = game+0x4128` (o mesmo dos pontos do GPS). Montagem dos mapas do jogo
+    (0x54a2a9; a da oferta de carga em 0x105f426): `[mapa+0xb0] = nav; 0x100e9b0(mapa, 0.0f); 0x10012e0(mapa, true);
+    0x10009d0(mapa, nav); 0x1000a60(mapa)`. `0x10009d0` grava nav em `+0xb8` (nulo no nosso widget, preenchido no do jogo) e zera a rota
+    guardada (+0x540, +0x568, +0x6d8). Plugin: `game::AttachMapNavigation`, chamado logo depois do zoom ao abrir a página. NÃO testado em jogo.
