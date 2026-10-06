@@ -38,7 +38,7 @@ O script tem os caminhos da minha máquina no topo (jogo, extração, CMake): aj
 roda os testes, gera `routes.tsv` e instala em `bin\win_x64\plugins\spfPlugins\RoutePlanner\`. Nenhum arquivo
 do jogo é versionado aqui.
 
-## Ramos
+## Branches
 
 - `master`: versão atual (tags `v1.0` … `v3.1` são as versões aprovadas).
 - `escolta`: experimento parado de uma viatura de polícia que escolta o caminhão.
