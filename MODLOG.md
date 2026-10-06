@@ -547,3 +547,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   da branch `gps-distancia`, nunca testado em jogo) e limpa ao sair da página/fechar. Recusado pelo jogo durante um serviço
   ([game+0x42f0] = 1, 6, 7). A rota começa no caminhão. Zoom inicial 1 e um "empurrão" (muda um nível e volta) 2–3 quadros após abrir,
   para o mapa desenhar sozinho. NÃO testado em jogo; não sei se o GPS calcula com o jogo pausado.
+- **Etapa 2, teste (2026-10-06):** o GPS aceitou 2 pontos (log "GPS itcc.luxembourg -> bcp.kosice: 2 ponto(s)"), mas a rota não aparece em
+  nenhum dos mapas; arrastar com o mouse funciona nativamente. O mapa não abria desenhado porque os níveis de zoom são os `zoom_uplift[]`
+  de /def/map_data.sii: 0–1 mapa 3D, 2–3 minimapa, **4–7 mapa mundial (4 cidade … 7 mundo inteiro; maior = mais longe)**; eu abria no 1.
+  Agora abre no 7 e os botões ficam entre 4 e 7. O mapa com `show_country_names: true` tentava abrir `/font/map.font` a cada quadro
+  (17 mil erros no game.log, que estourou o limite) → `false`. Cores da rota em map_data.sii: `navigation_color` 0xFF0C0CCF.
+  Diagnóstico novo no log, 1,5 s após abrir: escala, zoom, estado (+0x888), máscara (+0x88c), modo (+0x894) do mapa e distância/tempo do
+  GPS pela telemetria (para saber se o jogo calcula a rota pausado). NÃO testado em jogo.

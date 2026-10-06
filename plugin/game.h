@@ -528,6 +528,9 @@ inline uint32_t WidgetFlags(void* window, uint32_t id) {
 // ("Index outside array boundaries: 8 >= 8" in the country names, crash of 2026-10-06): the game's own
 // screens set a level first, with 0x10005c0(map, level) (also fills the scale at +0x1e0 from the table
 // of levels at [[exe+0x36ae6d8]+0x98]+0x10 and refreshes the widget). Higher = closer.
+// The levels are the zoom_uplift[] of /def/map_data.sii: 0-1 the 3D map, 2-3 the minimap, and for the
+// world map 4 (city detail), 5 (closest), 6 (middle), 7 (whole world): higher = farther. Below 4 a world
+// map is so close that it looks empty.
 // Returns the level set (clamped to the table), or -1 if the widget or the function is not there.
 constexpr uintptr_t MAP_SET_ZOOM = 0x10005c0;
 constexpr unsigned char kMapZoomSig[10] = {0x48, 0x83, 0xec, 0x48, 0x4c, 0x8b, 0xc9, 0x3b, 0x91, 0xe8};
@@ -590,6 +593,23 @@ inline int SetGpsRoute(const uint64_t (*stops)[2], int count) { // stops[i] = {c
     return n;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return -1;
+  }
+}
+
+// Diagnostics for the map experiment: the widget's scale (+0x1e0), zoom level (+0x1e8), state (+0x888),
+// what-to-draw mask (+0x88c) and mode byte (+0x894). False if the widget is not there.
+inline bool MapState(void* window, uint32_t id, float* scale, int* zoom, uint32_t* state, uint32_t* mask, int* mode) {
+  __try {
+    const uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    if (!map) return false;
+    *scale = *reinterpret_cast<const float*>(map + 0x1e0);
+    *zoom = *reinterpret_cast<const int*>(map + 0x1e8);
+    *state = *reinterpret_cast<const uint32_t*>(map + 0x888);
+    *mask = *reinterpret_cast<const uint32_t*>(map + 0x88c);
+    *mode = map[0x894];
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
   }
 }
 

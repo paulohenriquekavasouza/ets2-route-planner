@@ -865,8 +865,8 @@ std::atomic<bool> g_native_toggle{false};
 
 enum class NativePage { Planner, Favorites, Place, Cargo, Map };
 int g_native_map_kind = 0; // EXPERIMENT (route preview, stage 1): which of the game's map widgets the map page shows
-int g_native_map_zoom = 1; // its zoom level (higher = closer); a map must be given one before it is first drawn
-int g_native_map_nudge = 0; // frames until the zoom is changed and put back: the map only draws after its zoom changed once
+int g_native_map_zoom = 7; // its zoom level: 4 (city) .. 7 (whole world); a map must be given one before it is first drawn
+int g_native_map_probe = 0; // frames until the map and the GPS are logged (diagnostics of the experiment)
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
 std::string g_native_map_note;
 bool g_native_keep = false; // the action just run changed the open window itself: no rebuild
@@ -1440,12 +1440,13 @@ void NativeMapPage(NativeUi& ui) {
   static const char* const kinds[] = {"ui_world_map", "ui_job_map"}; // ui_map (the adviser's) has other attributes: its script does not load
   g_native_map_kind = std::clamp(g_native_map_kind, 0, 1);
   ui.Title(g_native_map_note.empty() ? "MAPA DO JOGO" : g_native_map_note, 90, 772, 1260, 30, kNFontBold, kNAmber);
-  ui.Node(kinds[g_native_map_kind], " show_country_names: true\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
+  ui.Node(kinds[g_native_map_kind], " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
   for (int i = 0; i < 2; ++i) ui.TextButton(i == 0 ? "Mapa mundial" : "Mapa de serviço", kX1 + 400 + i * 190, 96, 180, [i] { g_native_map_kind = i; }, g_native_map_kind == i);
   for (const int step : {-1, 1})
     ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
-      const int now = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom + step); // on the map that is on screen
+      // on the map that is on screen; "+" is closer = a lower level, never below the world map's closest
+      const int now = game::SetMapZoom(g_native_window, 100000, std::max(4, g_native_map_zoom - step));
       if (now >= 0) g_native_map_zoom = now;
       Log("mapa: zoom " + std::to_string(now));
       g_native_keep = true;
@@ -1619,7 +1620,7 @@ bool ShowNative() {
   if (why == 0 && g_native_page == NativePage::Map) {
     const int zoom = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom);
     Log("mapa: zoom inicial " + std::to_string(zoom));
-    g_native_map_nudge = 3;
+    g_native_map_probe = 90;
     if (zoom < 0) { // not safe to show: take it down before anything draws it
       game::CloseGameWindow(&g_native_window);
       why = -2;
@@ -1651,11 +1652,19 @@ void CloseNative() {
 void NativeExperiment() {
   static bool was_down = false, esc_was_down = false;
   if (g_native_old && --g_native_old_in <= 0) game::CloseGameWindow(&g_native_old);
-  // a map shows nothing until its zoom changes once (seen in game): one level away and, a frame later, back
-  if (g_native_window && g_native_page == NativePage::Map && g_native_map_nudge > 0) {
-    --g_native_map_nudge;
-    if (g_native_map_nudge == 1) game::SetMapZoom(g_native_window, 100000, g_native_map_zoom == 0 ? 1 : g_native_map_zoom - 1);
-    if (g_native_map_nudge == 0) game::SetMapZoom(g_native_window, 100000, g_native_map_zoom);
+  // diagnostics: what the map widget holds and whether the game's GPS has a route, 1.5 s after the page opened
+  if (g_native_window && g_native_page == NativePage::Map && g_native_map_probe > 0 && --g_native_map_probe == 0) {
+    float scale = 0;
+    int zoom = 0, mode = 0;
+    uint32_t state = 0, mask = 0;
+    SPF_NavigationData nav{};
+    if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
+    char line[200];
+    if (game::MapState(g_native_window, 100000, &scale, &zoom, &state, &mask, &mode))
+      std::snprintf(line, sizeof line, "mapa: escala %.1f, zoom %d, estado %u, máscara %08X, modo %d; GPS do jogo: %.1f km, %.0f min", scale, zoom, state, mask, mode,
+                    nav.navigation_distance / 1000.0f, nav.navigation_time / 60.0f);
+    else std::snprintf(line, sizeof line, "mapa: widget não encontrado; GPS do jogo: %.1f km", nav.navigation_distance / 1000.0f);
+    Log(line);
   }
   if (g_native_window) {
     DWORD pid = 0;
