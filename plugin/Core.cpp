@@ -1225,7 +1225,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
       ui.TextButton("INICIAR SERVIÇO", 520, ay, 400, [] {
         g_pending = Pending::Start;
         g_native_leave = true;
-      }, false, 42);
+      }, true, 42);
   }
   if (!CargoPicked() || !CanStart(jd.on_job))
     ui.Title(jd.on_job ? "Cancele o serviço atual para iniciar outro" : "Escolha a origem, o destino e uma carga para iniciar", 420, ay - 6, 600, 30, kNFont, kNDim);
