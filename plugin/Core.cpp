@@ -1547,7 +1547,7 @@ bool WriteNativeScript() {
 
 // Shows the current page (again). The game stays paused while the window is swapped.
 bool ShowNative() {
-  // The new window goes up before the old one comes down (five frames later, in NativeExperiment): closing
+  // The new window goes up before the old one comes down (four frames later, in NativeExperiment): closing
   // first left a frame with nothing on screen, a blink at every click. Each window has its own name,
   // because showing a window takes down any other with the same name.
   void* const old = g_native_window;
@@ -1563,7 +1563,7 @@ bool ShowNative() {
   }
   if (g_native_old) game::CloseGameWindow(&g_native_old); // two rebuilds in a row
   g_native_old = old;
-  g_native_old_in = 5;
+  g_native_old_in = 4;
   return true;
 }
 

@@ -518,4 +518,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - **Ordenar por:** Nome / Peso (dourado o ativo); clicar no ativo inverte (A–Z ↔ Z–A, mais pesada ↔ mais leve primeiro).
 - NÃO testado em jogo.
 - A janela antiga passou a ser fechada 3 quadros depois (pedido do usuário após testar com 2). Salva como v3.1.
-- Depois da v3.1 (sem tag): a janela antiga passou a ser fechada 5 quadros depois (pedido do usuário).
+- Depois da v3.1 (sem tag): a janela antiga passou a ser fechada 5 e depois 4 quadros depois (pedidos do usuário); fica em 4.
