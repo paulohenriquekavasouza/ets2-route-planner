@@ -497,3 +497,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   com o rótulo ao lado; roda do mouse vira a página das listas (`UI_GetMouseWheel` do SPF, lido no Update: não confirmado que chega com a UI
   do SPF fechada); `SiiString` troca →, …, · e € (não existem nas fontes do jogo → "?") e remove < > (são marcação). NÃO testado em jogo.
 - Roda do mouse: `UI_GetMouseWheel` do SPF NÃO chega com a UI dele fechada (teste do usuário). Trocado por um gancho `WH_MOUSE_LL` numa thread própria com fila de mensagens, ligado só enquanto a tela nativa está aberta (`WheelStart/WheelStop`; o Shutdown sempre encerra a thread). NÃO testado em jogo.
+
+## v3.0.0 (master, 2026-10-05) — planejador na interface do próprio jogo (Home)
+- Aprovada pelo usuário ("funcionou, salve essa como v3.0"). Sobre a 2.7: a tela nativa do Home (ver "EXPERIMENTO" e Etapas 1–4 acima):
+  pausa o jogo, cursor nativo, páginas Planejar / Favoritas / Local / Carga feitas com widgets, bandeiras, ícones de carga e logotipos do
+  jogo; checkbox do jogo nas opções; roda do mouse vira páginas; Esc ou Home fecham. O F8 (ImGui) continua igual.
+- Confirmado em jogo pelo usuário: abrir/fechar, cliques, iniciar serviço, visual, "Qualquer carga" só na página de cargas.
+  Não confirmado explicitamente: roda do mouse com o gancho novo.
