@@ -615,3 +615,12 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   0xFFFFFFFF; só o zoom pela roda aplica o conjunto do nível). `game::SetMapZoom` agora também aplica o conjunto do nível
   (`0x10017d0(mapa, tabela[nível])`, tabela em `[[exe+0x36ae6d8]+0x98]+0x178`) e, nos botões de zoom, reconstrói o conteúdo
   (`0xffee60(mapa, 3)`). Assim os ícones seguem a regra do próprio jogo: aparecem conforme o nível de zoom. NÃO testado em jogo.
+- **v3.2 (2026-10-06): a pré-visualização da rota deixa de ser experimento.** A pedido do usuário ("está ficando bem legal"):
+  - Um só botão no cartão ROTA, "Ver a rota no mapa"; a página mostra só o `ui_world_map` (sem "Mapa mundial"/"Mapa de serviço").
+  - Saiu do código o caminho da tela de mapa do próprio jogo (`StartMapPreview`/`RunMapPreview`, `game::OpenMapScreen`, `GameWindowOpen`,
+    `PauseCounters`) e os diagnósticos (`MapState`, `CopyMapBytes`, `FindGameWindow`, map_real.bin/map_ours.bin). O que se aprendeu com
+    eles está nas entradas acima e no histórico do git (até `92a665c`).
+  - Ícones "com um pouco mais de zoom": o mapa usa o conjunto de flags do nível seguinte, mais afastado (`tabela[nível + 1]`), então cada
+    grupo de ícones só aparece um nível de zoom depois do que no mapa do jogo. Como a roda do mouse muda o nível sem mexer nas flags
+    (quem faz isso no jogo é o handler da tela), `game::KeepMapIcons` confere a cada quadro e reaplica quando o nível muda
+    (`0x10017d0` + `0xffee60(mapa, 3)`); o nível lido também acerta os botões Zoom -/+ depois de usar a roda. NÃO testado em jogo.

@@ -443,19 +443,6 @@ constexpr Sig kPauseSigs[] = {
     {PAUSE_TIMER_A, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}}, {PAUSE_TIMER_B, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
     {PAUSE_MODE, {0x48, 0x89, 0x6c, 0x24, 0x20, 0x56, 0x48, 0x83, 0xec, 0x50}},    {UI_INPUT_REFRESH, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
 };
-// The four pause counters (G+0xac0, +0xac4, +0xac8, +0xacc), to tell when one of the game's own screens
-// has finished closing: they are back to what they were before it opened. False if G is not there.
-inline bool PauseCounters(int32_t out[4]) {
-  __try {
-    const uint8_t* const g = *At<uint8_t**>(GAME_STATE);
-    if (!g) return false;
-    std::memcpy(out, g + 0xac0, 4 * sizeof(int32_t));
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
-}
-
 inline bool PauseForUi(bool pause) {
   for (const Sig& s : kPauseSigs)
     if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
@@ -547,14 +534,30 @@ inline uint32_t WidgetFlags(void* window, uint32_t id) {
 // What a map draws (icons of companies, services, road numbers, city names...) is the set of flags at
 // +0x888. A new widget has all of them on (0xFFFFFFFF: every icon of Europe at once); the game keeps one
 // set per zoom level in the table at [[exe+0x36ae6d8]+0x98]+0x178 (read live: level 6 = 0x685407, level
-// 7 = 0x481402) and applies it with 0x10017d0(map, flags). 0x10005c0 does not do that, so it is done
-// here; `rebuild` then has the map collect its content again with 0xffee60(map, 3), as the game's
-// handlers do after changing the flags (not needed on a widget that is still to be set up).
+// 7 = 0x481402) and applies it with 0x10017d0(map, flags). Neither 0x10005c0 nor the widget's own wheel
+// zoom does that (the screens' handlers do), so it is done here; `rebuild` then has the map collect its
+// content again with 0xffee60(map, 3), as the game's handlers do after changing the flags (not needed on
+// a widget that is still to be set up).
+// The set used is the one of the next level farther out: the icons come in one level of zoom later than
+// on the game's own map, which is what the user asked for on a map this small.
 // Returns the level set (clamped to the table), or -1 if the widget or the function is not there.
 constexpr uintptr_t MAP_SET_ZOOM = 0x10005c0, MAP_SET_FLAGS = 0x10017d0, MAP_REBUILD = 0xffee60;
 constexpr unsigned char kMapZoomSig[10] = {0x48, 0x83, 0xec, 0x48, 0x4c, 0x8b, 0xc9, 0x3b, 0x91, 0xe8};
 constexpr unsigned char kMapFlagsSig[10] = {0x48, 0x8b, 0x05, 0x71, 0xcf, 0x6a, 0x02, 0x89, 0x91, 0x88};
 constexpr unsigned char kMapRebuildSig[10] = {0x48, 0x89, 0x5c, 0x24, 0x18, 0x55, 0x56, 0x57, 0x41, 0x54};
+// (no checks of its own: for the two functions below) Returns the map's level, -1 if it has no set of flags.
+inline int MapIcons(uint8_t* map, uint8_t* data, bool rebuild) {
+  const int level = *reinterpret_cast<const int*>(map + 0x1e8);
+  const uint32_t* const presets = reinterpret_cast<const uint32_t*>(Ptr(data + 0x178, 8));
+  const uint64_t count = *reinterpret_cast<const uint64_t*>(data + 0x178 + 0x10);
+  if (!presets || level < 0 || static_cast<uint64_t>(level) >= count) return -1;
+  const uint32_t want = presets[static_cast<uint64_t>(level) + 1 < count ? level + 1 : level];
+  if (*reinterpret_cast<const uint32_t*>(map + 0x888) != want) {
+    At<void (*)(void*, uint32_t)>(MAP_SET_FLAGS)(map, want);
+    if (rebuild) At<void (*)(void*, int)>(MAP_REBUILD)(map, 3);
+  }
+  return level;
+}
 inline int SetMapZoom(void* window, uint32_t id, int level, bool rebuild = false) {
   if (std::memcmp(At<const void*>(MAP_SET_ZOOM), kMapZoomSig, sizeof kMapZoomSig) != 0 || std::memcmp(At<const void*>(MAP_SET_FLAGS), kMapFlagsSig, sizeof kMapFlagsSig) != 0 ||
       std::memcmp(At<const void*>(MAP_REBUILD), kMapRebuildSig, sizeof kMapRebuildSig) != 0)
@@ -568,13 +571,28 @@ inline int SetMapZoom(void* window, uint32_t id, int level, bool rebuild = false
     if (levels < 1 || levels > 64) return -1;
     level = level < 0 ? 0 : level >= levels ? levels - 1 : level;
     At<void (*)(void*, int)>(MAP_SET_ZOOM)(map, level);
-    const uint32_t* const presets = reinterpret_cast<const uint32_t*>(Ptr(data + 0x178, 8));
-    const uint64_t preset_count = *reinterpret_cast<const uint64_t*>(data + 0x178 + 0x10);
-    if (presets && static_cast<uint64_t>(level) < preset_count) {
-      At<void (*)(void*, uint32_t)>(MAP_SET_FLAGS)(map, presets[level]);
-      if (rebuild) At<void (*)(void*, int)>(MAP_REBUILD)(map, 3);
-    }
+    MapIcons(map, data, rebuild);
     return level;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+}
+// Every frame while a map of ours is on screen: the wheel changes the level without touching the icons.
+// Only acts when the level changed (never twice for the same one, whatever the game does with the flags).
+// Returns the map's level, or -1.
+inline int KeepMapIcons(void* window, uint32_t id) {
+  static const uint8_t* last_map = nullptr;
+  static int last_level = -1;
+  if (std::memcmp(At<const void*>(MAP_SET_FLAGS), kMapFlagsSig, sizeof kMapFlagsSig) != 0 || std::memcmp(At<const void*>(MAP_REBUILD), kMapRebuildSig, sizeof kMapRebuildSig) != 0) return -1;
+  __try {
+    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const data = owner ? Ptr(owner, 0x98) : nullptr;
+    if (!map || !data) return -1;
+    const int level = *reinterpret_cast<const int*>(map + 0x1e8);
+    if (map == last_map && level == last_level) return level;
+    last_map = map, last_level = level;
+    return MapIcons(map, data, true);
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return -1;
   }
@@ -623,66 +641,6 @@ inline int SetGpsRoute(const uint64_t (*stops)[2], int count) { // stops[i] = {c
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return -1;
   }
-}
-
-// Diagnostics for the map experiment: the widget's scale (+0x1e0), zoom level (+0x1e8), state (+0x888),
-// what-to-draw mask (+0x88c) and mode byte (+0x894). False if the widget is not there.
-inline bool MapState(void* window, uint32_t id, float* scale, int* zoom, uint32_t* state, uint32_t* mask, int* mode) {
-  __try {
-    const uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
-    if (!map) return false;
-    *scale = *reinterpret_cast<const float*>(map + 0x1e0);
-    *zoom = *reinterpret_cast<const int*>(map + 0x1e8);
-    *state = *reinterpret_cast<const uint32_t*>(map + 0x888);
-    *mask = *reinterpret_cast<const uint32_t*>(map + 0x88c);
-    *mode = map[0x894];
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
-}
-
-// The game's own screens (map, bank, ...) are "desktop" screens described in /ui/desc/*.sui
-// (screen_desc : screen.map { ui_script[]: "world_map|/ui/world_map.sii" }). The route adviser's map
-// button opens the map with (0x68c3d9):
-//   0x506410(desktop = [exe+0x36ae748], char** name, char** "", ptr* out, ptr* zero)
-// with name = "screen.map" when byte [desktop+0x360] is set, else the name at exe+0x2dc1018; `out`
-// comes back holding a reference that the caller lets go (0x108650). The screen pauses the game and
-// closes itself (Esc), like when the player presses M.
-constexpr uintptr_t DESKTOP = 0x36ae748, SCREEN_OPEN = 0x506410, SCREEN_OTHER_NAME = 0x2dc1018, EMPTY_STRING = 0x21d0310;
-constexpr unsigned char kScreenOpenSig[10] = {0x48, 0x8b, 0xc4, 0x57, 0x41, 0x56, 0x48, 0x81, 0xec, 0xf8};
-inline bool OpenMapScreen() {
-  if (std::memcmp(At<const void*>(SCREEN_OPEN), kScreenOpenSig, sizeof kScreenOpenSig) != 0 || std::memcmp(At<const void*>(UI_RELEASE), kUiSigs[5].bytes, 10) != 0) return false;
-  __try {
-    uint8_t* const desktop = *At<uint8_t**>(DESKTOP);
-    if (!desktop) return false;
-    const char* name = "screen.map";
-    const char* empty = At<const char*>(EMPTY_STRING);
-    void* out = nullptr;
-    void* zero = nullptr;
-    At<void (*)(void*, const char**, const char**, void**, void**)>(SCREEN_OPEN)(desktop, desktop[0x360] ? &name : At<const char**>(SCREEN_OTHER_NAME), &empty, &out, &zero);
-    if (out) At<void (*)(void**)>(UI_RELEASE)(&out);
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
-}
-
-// Is a window with this name on screen? (the UI manager's list at +0xd8: node+0x10 = window, window+0xa0 = name)
-inline bool GameWindowOpen(const char* name) {
-  __try {
-    uint8_t* const mgr = *At<uint8_t**>(UI_MANAGER);
-    if (!mgr) return false;
-    uint8_t* const head = mgr + 0xd8;
-    int guard = 0;
-    for (uint8_t* node = Ptr(head, 0); node && node != head && guard < 200; node = Ptr(node, 0), ++guard) {
-      const uint8_t* const window = Ptr(node, 0x10);
-      const char* const its = window ? *reinterpret_cast<const char* const*>(window + 0xa0) : nullptr;
-      if (its && std::strcmp(its, name) == 0) return true;
-    }
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-  }
-  return false;
 }
 
 // A map widget only draws the GPS route when it has been told where the navigation is: the game's own
@@ -756,42 +714,6 @@ inline bool SetMapPlacement(void* window, uint32_t id, double x, double y, doubl
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }
-}
-
-// DIAGNOSTICS for the map experiment: the raw bytes of a map widget, to compare the one of the game's
-// own map screen (which draws the GPS route) with the one inside our window (which does not).
-// The game's screen: window "world_map" -> ui::portal id 100000 -> its child window (+0x98) -> map id 100000.
-constexpr size_t MAP_DUMP_SIZE = 0xA00;
-inline bool CopyMapBytes(void* window, bool through_portal, uint8_t* out, uintptr_t* address) {
-  __try {
-    uint8_t* w = static_cast<uint8_t*>(window);
-    if (through_portal) {
-      uint8_t* const portal = FindWidget(w, 100000);
-      w = portal ? Ptr(portal, 0x98) : nullptr;
-    }
-    uint8_t* const map = FindWidget(w, 100000);
-    if (!map) return false;
-    std::memcpy(out, map, MAP_DUMP_SIZE);
-    *address = reinterpret_cast<uintptr_t>(map);
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
-}
-inline void* FindGameWindow(const char* name) {
-  __try {
-    uint8_t* const mgr = *At<uint8_t**>(UI_MANAGER);
-    if (!mgr) return nullptr;
-    uint8_t* const head = mgr + 0xd8;
-    int guard = 0;
-    for (uint8_t* node = Ptr(head, 0); node && node != head && guard < 200; node = Ptr(node, 0), ++guard) {
-      uint8_t* const window = Ptr(node, 0x10);
-      const char* const its = window ? *reinterpret_cast<const char* const*>(window + 0xa0) : nullptr;
-      if (its && std::strcmp(its, name) == 0) return window;
-    }
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-  }
-  return nullptr;
 }
 
 inline bool CloseGameWindow(void** slot) {

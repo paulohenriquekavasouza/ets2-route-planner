@@ -864,14 +864,12 @@ bool g_native_paused = false; // we paused the game for the window (its cursor o
 std::atomic<bool> g_native_toggle{false};
 
 enum class NativePage { Planner, Favorites, Place, Cargo, Map };
-int g_native_map_kind = 0; // EXPERIMENT (route preview, stage 1): which of the game's map widgets the map page shows
 int g_native_map_zoom = 6; // its zoom level: 4 (city) .. 7 (whole world); a map must be given one before it is first drawn
 // The game only computes a GPS route while it is running (seen in game: 0 km while our screen kept it
 // paused, the real distance a second after it resumed). So when a route goes to the GPS the game is let
 // run until the route is there (or 4 s pass) and is paused again.
 uint64_t g_native_route_until = 0; // tick count when the wait gives up; 0 = not waiting
 float g_native_route_km = 0, g_native_route_min = 0; // what the GPS answered for the route on the map page
-int g_native_map_probe = 0; // frames until the map and the GPS are logged (diagnostics of the experiment)
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
 bool g_native_map_focus = false; // the two ends of the route are known: the map centres between them
 double g_native_map_center[2] = {}; // world x, z
@@ -1101,95 +1099,7 @@ const std::string& CityFlag(const std::string& city) {
   return c ? CountryFlag(c->parent) : none;
 }
 
-// ---- the route on the game's own map screen ----
-// The map screen of the game (key M) draws the route its GPS is on, lets itself be dragged and zoomed and
-// shows cities and companies: everything a preview needs. So: the planner's route goes to the GPS
-// (truck -> origin company -> destination company), our screen closes (the GPS only computes while the
-// game runs), the map screen is opened once the route is there, and when the player closes it the GPS
-// is cleared and the planner comes back. During a job the game does not let the GPS be changed: the map
-// is opened with the job's own route.
-enum class MapPreview { Off, Routing, Opening, Open, Closing };
-int32_t g_map_preview_counters[4] = {}; // the game's pause counters before its map screen opened
-MapPreview g_map_preview = MapPreview::Off;
-uint64_t g_map_preview_since = 0; // tick count when the current stage began
-bool g_map_preview_ours = false;  // the GPS waypoints are ours (to be cleared afterwards)
-
-void StartMapPreview(bool on_job) {
-  g_map_preview_ours = false;
-  if (!on_job && !g_src.city.empty() && !g_dst.city.empty()) {
-    std::string src_company, dst_company; // the picked cargo's companies, or the first of each city
-    if (CargoPicked()) src_company = g_options[g_selected].src_company, dst_company = g_options[g_selected].dst_company;
-    for (const auto& b : g_data.branches) {
-      if (src_company.empty() && b.parent == g_src.city) src_company = b.tok;
-      if (dst_company.empty() && b.parent == g_dst.city) dst_company = b.tok;
-    }
-    const uint64_t stops[2][2] = {{Token(src_company.c_str()), Token(g_src.city.c_str())}, {Token(dst_company.c_str()), Token(g_dst.city.c_str())}};
-    const int set = game::SetGpsRoute(stops, 2);
-    g_map_preview_ours = set > 0;
-    Log("mapa: GPS " + src_company + "." + g_src.city + " -> " + dst_company + "." + g_dst.city + ": " + std::to_string(set) + " ponto(s)");
-  }
-  g_map_preview = g_map_preview_ours ? MapPreview::Routing : MapPreview::Opening;
-  g_map_preview_since = GetTickCount64();
-  g_native_leave = true; // our screen closes and the game runs
-}
-
-// One step per frame, with our screen closed.
-void RunMapPreview() {
-  if (g_map_preview == MapPreview::Off) return;
-  const uint64_t waited = GetTickCount64() - g_map_preview_since;
-  if (g_map_preview == MapPreview::Routing) {
-    SPF_NavigationData nav{};
-    if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
-    // not before 1.5 s: the telemetry may still hold an older route for a moment (the first answer comes after ~1.1 s)
-    if (!((nav.navigation_distance > 0 && waited > 1500) || waited > 4000)) return;
-    char line[120];
-    std::snprintf(line, sizeof line, "mapa: rota no GPS: %.1f km, %.0f min", nav.navigation_distance / 1000.0f, nav.navigation_time / 60.0f);
-    Log(line);
-    g_map_preview = MapPreview::Opening;
-    g_map_preview_since = GetTickCount64();
-    return; // the map opens on the next frame
-  }
-  if (g_map_preview == MapPreview::Opening) {
-    if (waited < 100) return; // our own screen is gone and the game has run a few frames
-    game::PauseCounters(g_map_preview_counters);
-    const bool opened = game::OpenMapScreen();
-    Log(std::string("mapa: tela de mapa do jogo ") + (opened ? "pedida" : "NÃO abriu"));
-    g_map_preview = opened ? MapPreview::Open : MapPreview::Off;
-    g_map_preview_since = GetTickCount64();
-    if (!opened && g_map_preview_ours) game::SetGpsRoute(nullptr, 0);
-    return;
-  }
-  if (g_map_preview == MapPreview::Closing) {
-    // The map's window is gone, but the screen is still on its way out (fading, giving the pause back).
-    // Pausing for our planner in the middle of that left the world black: wait until the game's pause
-    // counters are what they were before the map opened, for a quarter of a second, then come back.
-    static uint64_t steady_since = 0;
-    int32_t now[4] = {};
-    const bool steady = game::PauseCounters(now) && std::memcmp(now, g_map_preview_counters, sizeof now) == 0;
-    if (!steady) steady_since = 0;
-    else if (!steady_since) steady_since = GetTickCount64();
-    if ((steady_since && GetTickCount64() - steady_since > 250) || waited > 5000) {
-      const bool ok = steady_since != 0;
-      Log(std::string("mapa: ") + (ok ? "jogo de volta ao normal; planejador reaberto" : "o jogo não voltou ao estado de antes do mapa em 5 s; planejador NÃO reaberto"));
-      if (ok) g_native_toggle = true;
-      steady_since = 0;
-      g_map_preview = MapPreview::Off;
-    }
-    return;
-  }
-  // Open: until the player closes the map (it takes a moment to appear)
-  static bool seen = false;
-  const bool open = game::GameWindowOpen("world_map");
-  if (open) seen = true;
-  if ((seen && !open) || (!seen && waited > 5000)) {
-    Log(std::string("mapa: ") + (seen ? "tela de mapa fechada" : "a tela de mapa não apareceu em 5 s") + (g_map_preview_ours ? "; GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")" : ""));
-    g_map_preview = seen ? MapPreview::Closing : MapPreview::Off;
-    g_map_preview_since = GetTickCount64();
-    seen = false;
-  }
-}
-
-// EXPERIMENT, stage 2 of the route preview: the game's maps draw the route its GPS is on, so the route
+// The route preview: the game's maps draw the route its GPS is on, so the route
 // picked in the planner is sent to the GPS (truck -> origin company -> destination company) while the
 // map page is open and taken out again when it is left. The game refuses while a job is running.
 void NativeGpsPreview(bool on) {
@@ -1277,7 +1187,6 @@ void NativePlaceButton(NativeUi& ui, const char* label, Side& side, bool src, in
   });
 }
 
-void StartMapPreview(bool on_job);
 
 void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   const int top = kCardTop, h = kCardH, w = kCardW, bw = w - 2 * kNPad, bottom = top - h;
@@ -1287,12 +1196,9 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Usar a cidade atual", kX1 + kNPad, top - 148, bw, [] { PickCurrentCity(); });
   NativePlaceButton(ui, "DESTINO", g_dst, false, kX1 + kNPad, top - 206, bw);
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
-  // The route on the game's own map screen. (The map page of the first attempts, a map widget inside our
-  // window, is not reachable any more: such a widget shows the world but not the GPS route.)
-  // Two ways, both experiments: the game's own map screen (draws the GPS route) and a map widget inside our
-  // window (shows the world, but nobody feeds it the route: the map screen's handler class does that).
-  ui.TextButton("Ver a rota no mapa do jogo", kX1 + kNPad, bottom + 88, bw, [on_job = jd.on_job] { StartMapPreview(on_job); });
-  ui.TextButton("Mapa na janela (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
+  // (Opening the game's own map screen instead showed the route too, but left the world black on the way
+  // back to the planner: see MODLOG, v3.2.)
+  ui.TextButton("Ver a rota no mapa", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1551,17 +1457,12 @@ void NativeCargoPage(NativeUi& ui) {
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
 }
 
-// EXPERIMENT, stage 1 of the route preview: one of the game's own map widgets inside our window, to
-// learn whether it draws and lets itself be dragged and zoomed without the handler class the game's
-// map screens have. The three classes come from the game's scripts: ui_world_map (the full map screen,
-// /ui/world_map_map.sii), ui_job_map (the map beside a job offer, /ui/map_view_detail.sii) and ui_map.
+// The route preview: the game's own world map widget (ui_world_map, as in /ui/world_map_map.sii) inside our
+// window. It draws, drags and zooms by itself; what the game's map screen does for it is done in ShowNative.
 void NativeMapPage(NativeUi& ui) {
-  static const char* const kinds[] = {"ui_world_map", "ui_job_map"}; // ui_map (the adviser's) has other attributes: its script does not load
-  g_native_map_kind = std::clamp(g_native_map_kind, 0, 1);
   ui.Title(g_native_map_note.empty() ? "MAPA DO JOGO" : g_native_map_note, 90, 772, 1260, 30, kNFontBold, kNAmber);
-  ui.Node(kinds[g_native_map_kind], " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
+  ui.Node("ui_world_map", " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
-  for (int i = 0; i < 2; ++i) ui.TextButton(i == 0 ? "Mapa mundial" : "Mapa de serviço", kX1 + 400 + i * 190, 96, 180, [i] { g_native_map_kind = i; }, g_native_map_kind == i);
   for (const int step : {-1, 1})
     ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
       // on the map that is on screen; "+" is closer = a lower level, never below the world map's closest
@@ -1755,7 +1656,6 @@ bool ShowNative() {
     const bool placed = zoom >= 0 && game::SetMapPlacement(g_native_window, 100000, td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z,
                                                            td.world_placement.orientation.heading, g_native_map_focus ? g_native_map_center : nullptr);
     Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada" : ", navegação NÃO ligada") + (placed ? ", posição do caminhão entregue" : ", posição NÃO entregue"));
-    g_native_map_probe = 90;
     if (zoom < 0) { // not safe to show: take it down before anything draws it
       game::CloseGameWindow(&g_native_window);
       why = -2;
@@ -1786,26 +1686,6 @@ void CloseNative() {
 
 void NativeExperiment() {
   static bool was_down = false;
-  if (!g_native_window) RunMapPreview();
-  // DIAGNOSTICS: once a second, the bytes of the map widget on screen go to a file next to the plugin:
-  // map_real.bin while the game's own map screen (key M) is open, map_ours.bin while our map page is.
-  static int dump_tick = 0;
-  if (++dump_tick % 60 == 0) {
-    static uint8_t bytes[game::MAP_DUMP_SIZE];
-    uintptr_t address = 0;
-    void* const real = g_native_window ? nullptr : game::FindGameWindow("world_map");
-    const bool ours = g_native_window && g_native_page == NativePage::Map && !g_native_route_until;
-    if ((real && game::CopyMapBytes(real, true, bytes, &address)) || (ours && game::CopyMapBytes(g_native_window, false, bytes, &address))) {
-      FILE* f = nullptr;
-      if (fopen_s(&f, (PluginDir() + (real ? "map_real.bin" : "map_ours.bin")).c_str(), "wb") == 0 && f) {
-        std::fwrite(&address, sizeof address, 1, f);
-        std::fwrite(bytes, 1, sizeof bytes, f);
-        std::fclose(f);
-      }
-      static int logged = 0;
-      if (logged++ < 6) Log(std::string("mapa: bytes do mapa ") + (real ? "do jogo" : "da nossa janela") + " gravados");
-    }
-  }
   if (g_native_route_until && g_native_window) { // the game is running so that it computes the route: pause again once it has
     SPF_NavigationData nav{};
     if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
@@ -1827,19 +1707,9 @@ void NativeExperiment() {
     }
   }
   if (g_native_old && --g_native_old_in <= 0) game::CloseGameWindow(&g_native_old);
-  // diagnostics: what the map widget holds and whether the game's GPS has a route, 1.5 s after the page opened
-  if (g_native_window && g_native_page == NativePage::Map && g_native_map_probe > 0 && --g_native_map_probe == 0) {
-    float scale = 0;
-    int zoom = 0, mode = 0;
-    uint32_t state = 0, mask = 0;
-    SPF_NavigationData nav{};
-    if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
-    char line[200];
-    if (game::MapState(g_native_window, 100000, &scale, &zoom, &state, &mask, &mode))
-      std::snprintf(line, sizeof line, "mapa: escala %.1f, zoom %d, estado %u, máscara %08X, modo %d; GPS do jogo: %.1f km, %.0f min", scale, zoom, state, mask, mode,
-                    nav.navigation_distance / 1000.0f, nav.navigation_time / 60.0f);
-    else std::snprintf(line, sizeof line, "mapa: widget não encontrado; GPS do jogo: %.1f km", nav.navigation_distance / 1000.0f);
-    Log(line);
+  if (g_native_window && g_native_page == NativePage::Map) { // the wheel zooms the map by itself: the icons and the Zoom buttons follow
+    const int level = game::KeepMapIcons(g_native_window, 100000);
+    if (level >= 0) g_native_map_zoom = level;
   }
   if (g_native_window) {
     DWORD pid = 0;
