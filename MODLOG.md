@@ -624,3 +624,27 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     grupo de ícones só aparece um nível de zoom depois do que no mapa do jogo. Como a roda do mouse muda o nível sem mexer nas flags
     (quem faz isso no jogo é o handler da tela), `game::KeepMapIcons` confere a cada quadro e reaplica quando o nível muda
     (`0x10017d0` + `0xffee60(mapa, 3)`); o nível lido também acerta os botões Zoom -/+ depois de usar a roda. NÃO testado em jogo.
+- **Rumo à v3.3 (2026-10-06): crash ao girar a roda no mapa, rota personalizada.** NADA disto foi testado em jogo ainda.
+  - **Crash:** sem registro em game.crash.txt; causa mais provável achada por leitura do executável: o plugin chamava `0xffee60(mapa, 3)`
+    (refazer o conteúdo) direto. A atualização do próprio widget (`0x100f240`) só chama isso quando `[mapa+0x81c] != 0` e `[mapa+0xdd0] == 0`
+    (nenhuma coleta ainda em andamento), com os bits pendentes de `+0x7c8` (o jogo escreve 3 ali para "tudo"). Agora o plugin só liga os
+    bits (`[mapa+0x7c8] |= 3`) e o widget refaz quando pode. `MAP_REBUILD` saiu do código.
+  - **O widget de mapa já sabe pontos de passagem** (RE): lista própria `array<route_task_node_t>` em `+0x8c0` (dados `+0x8c8`, quantidade
+    `+0x8d0`, máximo 10; lugares a evitar em `+0x9d8`, histórico em `+0xaf0`), aplicada à navegação por `vt[0x1d8]` = `0x1013b00`:
+    com modo de navegação 1-4/6-7 (serviço) os pontos vão ANTES do último alvo e o modo fica; senão modo 5 só com os pontos (0 se vazio).
+    Quem aciona é a classe da tela (`0x10ab418`, eventos `shortcut_1` adicionar, `shortcut_1h` evitar, `shortcut_2` desfazer, `select*`):
+    `0x10112a0(mapa, &índice, &nó, &tipo)` acha o que está sob o cursor (true = já é um ponto da lista), `0x1012c30` + `0x1012eb0` pegam e
+    tiram, `0x10130e0(mapa, índice, &nó)` insere na ordem da rota (`0x1016b40` = inserir no array). O cursor o widget acompanha sozinho
+    (`0x10127e0`: `+0xd44/+0xd48`). Nó = 24 bytes, primeiro dword 2 = nenhum. `0x4a9510` cria um alvo a partir de uma posição (não usado).
+  - **Navegação:** `[game+0x42f0]` É o modo da navegação (`nav+0x1c8`): 0 nada, 2 destino escolhido numa tela, 5 pontos livres, 1/6/7 serviço.
+    Alvos em `nav+0x1f8` (dados `+0x200`, quantidade `+0x208`); `0x4faee0(nav, modo, a1d0, alvos, a220, a248)` é o setter completo e
+    `0x4fad00` o que zera os outros três; ambos somam 1 em `nav+0x270`.
+  - **Plugin:** clique direito na página do mapa = `game::MapClickWaypoint` (adiciona, ou tira o que está sob o cursor); a lista do widget
+    vira `g_via`, o GPS recebe caminhão → origem → pontos → destino (`SetGpsRoute` com `via`), a página é refeita olhando para o mesmo
+    lugar (`MapViewCenter`, `+0x1b4`) e o widget novo recebe os pontos de volta (`FillMapWaypoints`). Botão "Rota padrão" limpa.
+    Mudou cidade, carga ou empresa (`ViaKey`): pontos descartados. Ao iniciar o serviço os pontos vão para `g_job_via` e `RunJobVia`
+    os põe no GPS (`ApplyJobWaypoints`: antes do alvo do serviço, modo mantido) quando há serviço, o reboque está engatado e o GPS tem
+    um alvo só; uma vez só (o jogo tira cada ponto ao passar por ele). Os pontos guardam ponteiros do mapa carregado: valem só na sessão.
+  - **Fonte dos nomes das cidades:** não feito. Não há configuração para isso (`/def/map_data.sii` só tem cores e escalas; o script do
+    widget só tem `show_country_names`); tamanho e cor saem do código de desenho (`0x100d3xx`, cor 0xff00aeff, escala por `vt[0x1b0]`).
+    Mexer nisso seria alterar código do jogo em memória.

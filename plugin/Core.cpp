@@ -74,6 +74,13 @@ View g_view = View::Planner;
 std::vector<Favorite> g_favorites;
 int g_editing = -1; // favourite being edited in the planner (-1 = none)
 Pending g_pending = Pending::None;
+// The player's own points on the route (right click on the map page), in route order, as the game's map
+// made them. They belong to the service planned when they were made: any change to it (cities, cargo,
+// companies) drops them. They hold pointers into the loaded map: not kept across game sessions.
+std::vector<game::NavNode> g_via;
+std::string g_via_for;
+std::vector<game::NavNode> g_job_via; // those of the job the planner started, until the GPS has them
+uint64_t g_job_via_since = 0;
 
 void Log(const std::string& msg) {
   if (g_core && g_log) g_core->logger->Log(g_log, SPF_LOG_INFO, msg.c_str());
@@ -821,8 +828,9 @@ void RunPending() {
                   g_dst.city.c_str(), o.off_market ? " (fora do mercado)" : "", ok ? "ok" : err);
     Log(msg);
     if (ok && g_teleport) g_teleport_in = 10; // let the new job settle for a few frames first
+    if (ok) g_job_via = g_via, g_job_via_since = GetTickCount64(); // RunJobVia hands them to the GPS
     if (ok) { // the game's own message box, once the teleport and its parking brake hint are over
-      g_hint_text = "<color value=@@clr_sel@@>Serviço iniciado<br><color value=@@clr_txt@@>" + CargoName(g_data, o.cargo) + "<br>" + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city) + (g_refuel ? "<br>Tanque cheio" : ""); // the game's font has no arrow glyph
+      g_hint_text = "<color value=@@clr_sel@@>Serviço iniciado<br><color value=@@clr_txt@@>" + CargoName(g_data, o.cargo) + "<br>" + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city) + (g_refuel ? "<br>Tanque cheio" : "") + (g_via.empty() ? "" : "<br>Rota personalizada no GPS"); // the game's font has no arrow glyph
       g_hint_in = 120;
     }
     if (ok && g_refuel) {
@@ -871,6 +879,8 @@ int g_native_map_zoom = 6; // its zoom level: 4 (city) .. 7 (whole world); a map
 uint64_t g_native_route_until = 0; // tick count when the wait gives up; 0 = not waiting
 float g_native_route_km = 0, g_native_route_min = 0; // what the GPS answered for the route on the map page
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
+bool g_native_map_keep_view = false; // the map page is rebuilt after a change to the points: same view
+std::atomic<bool> g_rclick{false};   // the right button was released with our screen open
 bool g_native_map_focus = false; // the two ends of the route are known: the map centres between them
 double g_native_map_center[2] = {}; // world x, z
 std::string g_native_map_note;
@@ -1102,6 +1112,12 @@ const std::string& CityFlag(const std::string& city) {
 // The route preview: the game's maps draw the route its GPS is on, so the route
 // picked in the planner is sent to the GPS (truck -> origin company -> destination company) while the
 // map page is open and taken out again when it is left. The game refuses while a job is running.
+std::string ViaKey() {
+  std::string key = g_src.city + "|" + g_dst.city;
+  if (CargoPicked()) key += "|" + g_options[g_selected].cargo + "|" + g_options[g_selected].src_company + "|" + g_options[g_selected].dst_company;
+  return key;
+}
+
 void NativeGpsPreview(bool on) {
   if (!on) {
     if (g_native_gps) Log("mapa: GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")");
@@ -1125,18 +1141,19 @@ void NativeGpsPreview(bool on) {
   const uint64_t stops[2][2] = {{Token(src_company.c_str()), Token(g_src.city.c_str())}, {Token(dst_company.c_str()), Token(g_dst.city.c_str())}};
   // the view: centred between the two companies, at the closest zoom that still shows both
   double a[3], b[3];
-  g_native_map_focus = game::CompanyCenter(stops[0][0], stops[0][1], a) && game::CompanyCenter(stops[1][0], stops[1][1], b);
-  if (g_native_map_focus) {
+  if (!g_native_map_keep_view) g_native_map_focus = game::CompanyCenter(stops[0][0], stops[0][1], a) && game::CompanyCenter(stops[1][0], stops[1][1], b);
+  if (g_native_map_focus && !g_native_map_keep_view) {
     g_native_map_center[0] = (a[0] + b[0]) / 2, g_native_map_center[1] = (a[2] + b[2]) / 2;
     const double span = std::max(std::abs(a[0] - b[0]) * 0.75, std::abs(a[2] - b[2]) * 1.5); // the map area is about twice as wide as it is tall
     // ponytail: the levels' reach in world units is an estimate from screenshots (level 7 shows all of Europe)
     g_native_map_zoom = span < 3500 ? 5 : span < 13000 ? 6 : 7;
   }
-  const int set = game::SetGpsRoute(stops, 2);
+  const int via = static_cast<int>(g_via.size());
+  const int set = game::SetGpsRoute(stops, 2, g_via.data(), via) - via;
   g_native_gps = set > 0;
   g_native_map_note = set == 2 ? "Rota enviada ao GPS do jogo: caminhão, " + CityLabel(g_src.city) + ", " + CityLabel(g_dst.city)
                                : set == 1 ? "O jogo só achou um dos dois pontos" : "O jogo recusou trocar o GPS (há um serviço em andamento?)";
-  Log("mapa: GPS " + src_company + "." + g_src.city + " -> " + dst_company + "." + g_dst.city + ": " + std::to_string(set) + " ponto(s)");
+  Log("mapa: GPS " + src_company + "." + g_src.city + " -> " + dst_company + "." + g_dst.city + ": " + std::to_string(set) + " ponto(s) + " + std::to_string(via) + " do jogador");
   if (set > 0 && g_native_paused && game::PauseForUi(false)) { // let the game run so it computes the route
     g_native_paused = false;
     g_native_route_until = GetTickCount64() + 4000;
@@ -1198,7 +1215,8 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
   // (Opening the game's own map screen instead showed the route too, but left the world black on the way
   // back to the planner: see MODLOG, v3.2.)
-  ui.TextButton("Ver a rota no mapa", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
+  ui.TextButton(g_via.empty() ? "Ver a rota no mapa" : "Ver a rota no mapa (personalizada: " + std::to_string(g_via.size()) + (g_via.size() == 1 ? " ponto)" : " pontos)"), kX1 + kNPad,
+                bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1463,6 +1481,14 @@ void NativeMapPage(NativeUi& ui) {
   ui.Title(g_native_map_note.empty() ? "MAPA DO JOGO" : g_native_map_note, 90, 772, 1260, 30, kNFontBold, kNAmber);
   ui.Node("ui_world_map", " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
+  ui.Title("Clique direito no mapa: marca um ponto de passagem, ou tira o que estiver sob o cursor (" + std::to_string(g_via.size()) + " de " + std::to_string(game::kMaxVia) + ")", kX1 + 170,
+           96, 690, 32, kNFontSmall, kNDim);
+  if (!g_via.empty())
+    ui.TextButton("Rota padrão", kX1 + 870, 96, 150, [] {
+      g_via.clear();
+      g_native_map_keep_view = false;
+      NativeGpsPreview(true);
+    });
   for (const int step : {-1, 1})
     ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
       // on the map that is on screen; "+" is closer = a lower level, never below the world map's closest
@@ -1565,6 +1591,7 @@ std::thread g_wheel_thread;
 LRESULT CALLBACK WheelProc(int code, WPARAM what, LPARAM data) {
   if (code == HC_ACTION && what == WM_MOUSEWHEEL)
     g_wheel += static_cast<short>(HIWORD(reinterpret_cast<const MSLLHOOKSTRUCT*>(data)->mouseData)) > 0 ? 1 : -1;
+  if (code == HC_ACTION && what == WM_RBUTTONUP) g_rclick = true;
   return CallNextHookEx(nullptr, code, what, data);
 }
 void WheelStart() {
@@ -1655,7 +1682,9 @@ bool ShowNative() {
     // the player's marker at the truck, the view on the route (or on the truck)
     const bool placed = zoom >= 0 && game::SetMapPlacement(g_native_window, 100000, td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z,
                                                            td.world_placement.orientation.heading, g_native_map_focus ? g_native_map_center : nullptr);
-    Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada" : ", navegação NÃO ligada") + (placed ? ", posição do caminhão entregue" : ", posição NÃO entregue"));
+    const bool filled = nav && (g_via.empty() || game::FillMapWaypoints(g_native_window, 100000, g_via.data(), static_cast<int>(g_via.size())));
+    Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada" : ", navegação NÃO ligada") + (placed ? ", posição do caminhão entregue" : ", posição NÃO entregue") +
+        (g_via.empty() ? "" : filled ? ", pontos do jogador devolvidos ao mapa" : ", pontos do jogador NÃO devolvidos ao mapa"));
     if (zoom < 0) { // not safe to show: take it down before anything draws it
       game::CloseGameWindow(&g_native_window);
       why = -2;
@@ -1684,8 +1713,36 @@ void CloseNative() {
   WheelStop();
 }
 
+// The job the planner started gets the player's points once the GPS holds the job's one target and the
+// trailer is on (before that the target is the trailer itself). Once: the game takes each point out as
+// it is reached, and they must not come back.
+void RunJobVia() {
+  static int tick = 0;
+  if (g_job_via.empty() || ++tick % 30 != 0 || !g_tel) return;
+  SPF_JobData jd{};
+  g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
+  if (!jd.on_job) {
+    if (GetTickCount64() - g_job_via_since > 15000) g_job_via.clear(); // the job is gone (cancelled, or it never started)
+    return;
+  }
+  static SPF_Trailer trailers[2];
+  uint32_t count = 2;
+  g_core->telemetry->Tel_GetTrailers(g_tel, trailers, sizeof(SPF_Trailer), &count);
+  if (count < 1 || !trailers[0].data.connected) return;
+  const int set = game::ApplyJobWaypoints(g_job_via.data(), static_cast<int>(g_job_via.size()));
+  if (set == 0) return;
+  Log(set == 1 ? "rota personalizada: " + std::to_string(g_job_via.size()) + " ponto(s) do jogador no GPS do serviço" : std::string("rota personalizada: NÃO consegui pôr os pontos no GPS"));
+  g_job_via.clear();
+}
+
 void NativeExperiment() {
   static bool was_down = false;
+  RunJobVia();
+  if (const std::string key = ViaKey(); key != g_via_for) { // another service: the route is the default one again
+    if (!g_via.empty()) Log("rota personalizada: o serviço mudou, pontos do jogador descartados");
+    g_via.clear();
+    g_via_for = key;
+  }
   if (g_native_route_until && g_native_window) { // the game is running so that it computes the route: pause again once it has
     SPF_NavigationData nav{};
     if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
@@ -1701,6 +1758,7 @@ void NativeExperiment() {
                       Thousands(static_cast<long long>(g_native_route_km)).c_str(), static_cast<int>(g_native_route_min) / 60, static_cast<int>(g_native_route_min) % 60);
       else std::snprintf(line, sizeof line, "O GPS do jogo não calculou a rota em 4 s");
       g_native_map_note = line;
+      if (!g_via.empty()) g_native_map_note += g_via.size() == 1 ? ", com 1 ponto seu" : ", com " + std::to_string(g_via.size()) + " pontos seus";
       Log(std::string("mapa: ") + line + (g_native_paused ? "" : " (FALHA ao pausar de novo)"));
       if (!ShowNative()) CloseNative(); // the title shows the answer
       return;
@@ -1716,7 +1774,7 @@ void NativeExperiment() {
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     const bool ours = pid == GetCurrentProcessId();
     const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    const bool released = was_down && !down, esc_pressed = g_esc.exchange(false);
+    const bool released = was_down && !down, esc_pressed = g_esc.exchange(false), right = g_rclick.exchange(false) && ours;
     was_down = down;
     const int wheel = ours ? g_wheel.exchange(0) : (g_wheel = 0, 0); // down = next page
     const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, std::max(g_native_pages, 1) - 1);
@@ -1729,6 +1787,21 @@ void NativeExperiment() {
       CloseNative();
     } else if (g_native_route_until) {
       // the game is running for a moment (no pointer): nothing to click
+    } else if (right && g_native_page == NativePage::Map) {
+      const int did = game::MapClickWaypoint(g_native_window, 100000);
+      Log(std::string("mapa: clique direito: ") + (did == 1 ? "ponto adicionado" : did == 2 ? "ponto removido" : did == 0 ? "nada ali (ou sem espaço)" : "NÃO foi possível"));
+      game::NavNode now[game::kMaxVia];
+      const int count = did > 0 ? game::MapWaypoints(g_native_window, 100000, now) : -1;
+      if (count >= 0) {
+        g_via.assign(now, now + count);
+        // the route again, with the origin and the destination around the points; then the page again
+        // (title, counter), looking at the same place
+        g_native_map_keep_view = game::MapViewCenter(g_native_window, 100000, g_native_map_center);
+        if (g_native_map_keep_view) g_native_map_focus = true;
+        NativeGpsPreview(true);
+        g_native_map_keep_view = false;
+        if (!ShowNative()) CloseNative();
+      }
     } else if (!typed.empty()) {
       for (const char ch : typed) {
         if (ch == '\b') {
@@ -1754,7 +1827,7 @@ void NativeExperiment() {
     }
   } else {
     was_down = false;
-    g_esc = false;
+    g_esc = g_rclick = false;
   }
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
