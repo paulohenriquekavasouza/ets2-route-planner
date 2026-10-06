@@ -466,3 +466,13 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   (b) o fundo continuou preto sem a parte da câmera → o culpado é o contador `G+0xac4`: só as telas cheias do jogo o sobem
   (0x68ca62, 0x839a70, 0x88b610, 0xa059cb, 0xa63a8c…); a pausa comum (0xa05aa0) sobe só 0xacc, 0xac8, 0xac0. `PauseForUi` não mexe mais nele.
   (c) flags do botão: 5CFF0101 → 5FFF0101 ao entrar o ponteiro e de volta a 5CFF0101 ao sair → o bit 24 serve para o clique.
+- **Etapa 3 (2026-10-05): planejador inteiro em tela nativa.** Confirmado em jogo antes: pausa comum (sem `G+0xac4`) mantém o mundo visível,
+  cursor nativo, favoritas com "Iniciar" funcionando; o "·" não existe na fonte do jogo (some).
+  Agora (`Core.cpp`, bloco "EXPERIMENT (Home)"): `NativeUi` monta o script no formato do F1 (painel 40..1400 × 40..860 com
+  `txt.window.bcg_rect4`, linha de título `txt.big.left`/`txt.big.center`, abas, cartões = `txt.background.flat` 18FFFFFF + título
+  `txt.big.bold.white.center`, botões `btn.normal`; destaque = botão com pml próprio: imagens de `btn_tab.mat` tingidas com `@@clr_sel@@`).
+  Páginas: Planejar (serviço atual com teleporte/cancelar; rota com país/cidade de origem e destino, cidade atual, maior rota; carga com
+  "Qualquer carga"; opções ao iniciar como botões liga/desliga; salvar favorita; INICIAR), Favoritas (salvar, iniciar, editar, remover,
+  paginada), e seletores em grade paginada de botões: País (5×12), Cidade (5×12), Carga (2×12). Cada clique roda a ação e regrava/reabre
+  o script (jogo continua pausado); ações que precisam do jogo rodando (iniciar, cancelar, teleporte, Retomar) fecham e retomam.
+  Sem caixa de texto nem lista com rolagem (precisariam de RE dos widgets ou de um handler). NÃO testado em jogo.

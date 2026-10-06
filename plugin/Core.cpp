@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <map>
 #include <set>
@@ -836,25 +837,30 @@ void RunPending() {
   }
 }
 
-// EXPERIMENT (Home): the planner as a window of the game's own UI (game::OpenGameWindow). For now it only
-// shows a script of ours; F8 stays the real planner.
-// The key comes from the host (SPF swallows Home before Windows' key state sees it: reading it directly found nothing).
+// =================================================================================================
+// EXPERIMENT (Home): the planner as a screen of the game's own UI. F8 stays the ImGui planner.
+//
+// The game builds its screens from SiiNunit scripts (game.h, OpenGameWindow). Ours is generated here,
+// laid out like the game's F1 screen: a full panel, a title row, tabs, cards with a bold heading and
+// the game's own buttons. A window of ours has no handler class, so:
+//   - content changes by writing a new script and opening it again (the game stays paused meanwhile);
+//   - a click is the left mouse button released while one of our buttons has the pointer over it
+//     (bit 24 of the widget's flags);
+//   - there is no text box or scrolling list: long choices (countries, cities, cargo) are pages of buttons.
+// The key comes from the host (SPF swallows Home before Windows' key state sees it).
+// ponytail: the game keeps every script it has loaded, so each rebuild leaves a few KB behind until the
+// game closes. If that ever matters: change widgets in place (needs the game's "set text" call).
+// =================================================================================================
 void* g_native_window = nullptr;
 bool g_native_paused = false; // we paused the game for the window (its cursor only exists while paused)
 std::atomic<bool> g_native_toggle{false};
-void CloseNative() {
-  const bool closed = game::CloseGameWindow(&g_native_window);
-  const bool resumed = g_native_paused && game::PauseForUi(false);
-  Log(std::string("janela do jogo (experimento): ") + (closed ? "fechada" : "falha ao fechar") + (g_native_paused ? (resumed ? ", jogo retomado" : ", FALHA ao retomar o jogo") : ""));
-  g_native_paused = false;
-}
-// ---- the window's script, written before each opening ----
-// The game builds its screens from SiiNunit scripts; ours is generated from the favourites so the
-// content is current without having to change widgets in memory. Coordinates are the UI's virtual
-// 1440x900 with the origin at the bottom left (so top > bottom).
-constexpr uint32_t kNativeClose = 200, kNativeFavBase = 300;
-constexpr int kNativeMaxFavs = 8;
-std::vector<uint32_t> g_native_buttons; // ids of the buttons in the window that is open
+
+enum class NativePage { Planner, Favorites, Country, City, Cargo };
+NativePage g_native_page = NativePage::Planner;
+bool g_native_src = true;   // which side the country / city pages fill
+int g_native_list_page = 0; // page of a paged list
+bool g_native_leave = false; // the action just run needs the game running: close instead of rebuilding
+std::vector<std::pair<uint32_t, std::function<void()>>> g_native_buttons; // id -> action, for the window that is open
 
 std::string SiiString(const std::string& s) {
   std::string out;
@@ -863,22 +869,6 @@ std::string SiiString(const std::string& s) {
     out += ch;
   }
   return out;
-}
-
-std::string SiiNode(const char* kind, const std::string& name, const std::string& body, int l, int r, int t, int b, uint32_t id, int layer,
-                    const std::string& parent, bool container) {
-  char tail[320];
-  std::snprintf(tail, sizeof tail, " coords_l: %d\n coords_r: %d\n coords_t: %d\n coords_b: %d\n area_l: %d\n area_r: %d\n area_t: %d\n area_b: %d\n id: %u\n layer: %d\n tab: -1\n pointer: -1\n",
-                l, r, t, b, container ? l : 1, container ? r : 0, container ? t : 0, container ? b : 1, id, layer);
-  return std::string(kind) + " : " + name + " {\n" + body + tail + " my_parent: " + parent + "\n}\n\n";
-}
-std::string SiiLabel(const std::string& name, const char* look, const std::string& text, int l, int r, int t, int b, uint32_t id, int layer, const std::string& parent) {
-  return SiiNode("ui::text_common", name, " value: \"" + SiiString(text) + "\"\n look_template: " + look + "\n text: \"\"\n", l, r, t, b, id, layer, parent, false);
-}
-std::string SiiButton(const std::string& name, const std::string& text, int l, int r, int t, uint32_t id, const std::string& parent) {
-  return SiiNode("ui::button_common", name,
-                 " value: \"" + SiiString(text) + "\"\n value2: \"\"\n look_template: btn.normal\n n_pml: \"\"\n s_pml: \"\"\n s2_pml: \"\"\n d_pml: \"\"\n p_pml: \"\"\n button_type: normal\n",
-                 l, r, t, t - 30, id, 4, parent, false);
 }
 
 // The game keeps a script it has loaded: the same path (or the same unit names) again shows the old
@@ -891,125 +881,417 @@ std::string NativeScriptDir() {
 }
 std::string NativeScriptPath() { return NativeScriptDir() + NativeScriptName(); }
 
-// Writes the script. False if the file could not be written.
+// One script being put together. Positions are x, y of the top-left corner, width and height in the
+// UI's virtual 1440x900 (the script itself wants left/right/top/bottom with y growing upwards).
+struct NativeUi {
+  std::string unit, group, kids;
+  std::vector<std::string> names;
+  uint32_t next_id = 1000;
+
+  std::string Node(const char* kind, const std::string& body, int x, int y, int w, int h, uint32_t id, int layer) {
+    const std::string name = unit + ".n" + std::to_string(names.size());
+    char tail[320];
+    std::snprintf(tail, sizeof tail,
+                  " coords_l: %d\n coords_r: %d\n coords_t: %d\n coords_b: %d\n area_l: 1\n area_r: 0\n area_t: 0\n area_b: 1\n id: %u\n layer: %d\n tab: -1\n pointer: -1\n", x,
+                  x + w, y, y - h, id, layer);
+    kids += std::string(kind) + " : " + name + " {\n" + body + tail + " my_parent: " + group + "\n}\n\n";
+    names.push_back(name);
+    return name;
+  }
+  // look = one of the game's text templates (txt.normal.left, txt.emph.left, txt.big.center, ...)
+  void Text(const char* look, const std::string& text, int x, int y, int w, int h = 28, int layer = 5) {
+    Node("ui::text_common", " value: \"" + SiiString(text) + "\"\n look_template: " + look + "\n text: \"\"\n", x, y, w, h, 0, layer);
+  }
+  // a flat coloured block (alpha first), like the cards of the F1 screen
+  void Block(const char* color, int x, int y, int w, int h, int layer = 2) {
+    Node("ui::text_common", std::string(" value: ") + color + "\n look_template: txt.background.flat\n text: \"\"\n", x, y, w, h, 0, layer);
+  }
+  void Card(const std::string& heading, int x, int y, int w, int h) {
+    Block("18FFFFFF", x, y, w, h);
+    Text("txt.big.bold.white.center", heading, x, y - 10, w, 30);
+  }
+  // The game's normal button (30 high), or its tab button tinted with the selection colour (42 high)
+  // for the main action, the selected tab and options that are on.
+  void Button(const std::string& text, int x, int y, int w, std::function<void()> action, bool accent = false) {
+    std::string looks = " n_pml: \"\"\n s_pml: \"\"\n s2_pml: \"\"\n d_pml: \"\"\n p_pml: \"\"\n";
+    if (accent) {
+      const std::string face =
+          "<img src=/material/ui/button/btn_tab.mat right=p4><img src=/material/ui/button/btn_tab.mat width=-4 left=p4 right=p4><img src=/material/ui/button/btn_tab.mat left=p4 "
+          "right=p0><ret><align vstyle=center hstyle=center><font face=/font/big_bold.font><color value=@@clr_white@@>" +
+          SiiString(text) + "</font></align>";
+      const std::string on = "<color value=@@clr_sel@@>" + face;
+      looks = " n_pml: \"" + on + "\"\n s_pml: \"" + on + "\"\n s2_pml: \"\"\n d_pml: \"" + on + "\"\n p_pml: \"" + on + "\"\n";
+    }
+    const uint32_t id = next_id++;
+    Node("ui::button_common",
+         " value: \"" + SiiString(text) + "\"\n value2: \"\"\n look_template: " + (accent ? "btn.tab" : "btn.normal") + "\n" + looks + " button_type: normal\n", x, y, w,
+         accent ? 42 : 30, id, 6);
+    g_native_buttons.emplace_back(id, std::move(action));
+  }
+  // an option that is on or off: accent look when on
+  void Toggle(const std::string& text, int x, int y, int w, bool* value) {
+    Button(text, x, *value ? y + 6 : y, w, [value] { *value = !*value; }, *value);
+  }
+
+  std::string Script() const {
+    const std::string wnd = unit + ".wnd";
+    std::string group_body = " fitting: false\n my_children: " + std::to_string(names.size()) + "\n";
+    for (size_t i = 0; i < names.size(); ++i) group_body += " my_children[" + std::to_string(i) + "]: " + names[i] + "\n";
+    const char* full = " coords_l: 0\n coords_r: 1440\n coords_t: 900\n coords_b: 0\n area_l: 0\n area_r: 1440\n area_t: 900\n area_b: 0\n";
+    return "SiiNunit\n{\nui::window : " + wnd +
+           " {\n window_handler: null\n clip_children: true\n keep_aspect: center\n user_string_data: \"\"\n first_direction_focus_id: 0\n fitting: false\n my_children: 1\n my_children[0]: " +
+           group + "\n" + full + " id: 0\n layer: 0\n tab: -1\n pointer: -1\n my_parent: null\n}\n\nui::group : " + group + " {\n" + group_body + full +
+           " id: 111\n layer: 0\n tab: -1\n pointer: -1\n my_parent: " + wnd + "\n}\n\n" + kids + "}\n";
+  }
+};
+
+// ---- what the pages need from the planner ----
+// The cargo options for the chosen cities, as the F8 planner computes them. Returns a note when there is nothing to list.
+const char* NativeCargoOptions() {
+  if (g_src.city.empty() || g_dst.city.empty()) return "Escolha origem e destino.";
+  const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
+  if (key != g_options_for) {
+    g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
+    g_options_for = key;
+    g_selected = -1;
+    g_cargo_pending = g_supported && !g_options.empty();
+  }
+  if (g_cargo_pending) FilterUnknownCargo(); // asks the game which cargo it knows
+  if (g_options.empty()) return g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas cidades. Ligue \"Qualquer carga\".";
+  return nullptr;
+}
+
+std::string Shorten(const std::string& s, size_t max) { // ponytail: counts bytes, an accent may cost one letter
+  if (s.size() <= max) return s;
+  size_t cut = max - 2;
+  while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut; // not in the middle of a UTF-8 character
+  return s.substr(0, cut) + "..";
+}
+
+// Buttons for a paged grid: `count` items, `cols` x `rows` per page, each made by `item(index, x, y, w)`.
+void NativeGrid(NativeUi& ui, int count, int cols, int rows, int row_h, const std::function<void(int, int, int, int)>& item) {
+  const int per_page = cols * rows, pages = std::max(1, (count + per_page - 1) / per_page);
+  g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
+  const int left = 110, width = 1220, gap = 8, w = (width - gap * (cols - 1)) / cols, top = 730;
+  for (int i = g_native_list_page * per_page, n = 0; i < count && n < per_page; ++i, ++n) item(i, left + (n % cols) * (w + gap), top - (n / cols) * row_h, w);
+  if (pages > 1) {
+    if (g_native_list_page > 0) ui.Button("< Anterior", 430, 150, 180, [] { --g_native_list_page; });
+    ui.Text("txt.normal.center", "Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 620, 150, 200, 30);
+    if (g_native_list_page < pages - 1) ui.Button("Próxima >", 830, 150, 180, [] { ++g_native_list_page; });
+  }
+}
+
+void NativeGoTo(NativePage page) {
+  g_native_page = page;
+  g_native_list_page = 0;
+}
+
+// ---- pages ----
+void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
+  const int top = 750, h = 400, w = 400, x1 = 110, x2 = 520, x3 = 930, pad = 30, bw = w - 2 * pad;
+  // current job
+  ui.Card("SERVIÇO ATUAL", x1, top, w, h);
+  if (!jd.on_job) {
+    ui.Text("txt.normal.center", "Nenhuma entrega em andamento", x1, top - 190, w);
+    g_confirm_cancel = false;
+  } else {
+    SPF_JobConstants jc{};
+    g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+    char line[256];
+    std::snprintf(line, sizeof line, "%s  (%.1f t)", jc.cargo_name, jc.cargo_mass / 1000.0f);
+    ui.Text("txt.emph.left", Shorten(line, 44), x1 + pad, top - 60, bw);
+    ui.Text("txt.normal.left", Shorten(std::string("De: ") + jc.source_company + ", " + jc.source_city, 44), x1 + pad, top - 92, bw);
+    ui.Text("txt.normal.left", Shorten(std::string("Para: ") + jc.destination_company + ", " + jc.destination_city, 44), x1 + pad, top - 120, bw);
+    std::snprintf(line, sizeof line, "%u km  -  prazo em %uh%02u", jc.planned_distance_km, jd.remaining_delivery_minutes / 60, jd.remaining_delivery_minutes % 60);
+    ui.Text("txt.normal.left", line, x1 + pad, top - 148, bw);
+    if (!g_confirm_cancel) {
+      ui.Button("Ir até a carga (teleporte)", x1 + pad, top - h + 100, bw, [] {
+        g_pending = Pending::Teleport;
+        g_native_leave = true;
+      });
+      ui.Button("Cancelar serviço", x1 + pad, top - h + 55, bw, [] { g_confirm_cancel = true; });
+    } else {
+      ui.Text("txt.emph.left", "Cancelar mesmo? O jogo cobra multa.", x1 + pad, top - h + 140, bw);
+      ui.Button("Sim, cancelar", x1 + pad, top - h + 100, bw, [] {
+        g_pending = Pending::Cancel;
+        g_confirm_cancel = false;
+        g_native_leave = true;
+      });
+      ui.Button("Não, manter", x1 + pad, top - h + 55, bw, [] { g_confirm_cancel = false; });
+    }
+  }
+  // route
+  ui.Card("ROTA", x2, top, w, h);
+  const auto side = [&](const char* title, Side& s, bool src, int y) {
+    const Named* country = Find(g_data.countries, s.country);
+    const std::string city = CityLabel(s.city);
+    ui.Text("txt.emph.left", title, x2 + pad, y, bw);
+    ui.Button(Shorten("País: " + (country ? country->name : std::string("todos")), 30), x2 + pad, y - 32, bw, [src] {
+      g_native_src = src;
+      NativeGoTo(NativePage::Country);
+    });
+    ui.Button(Shorten("Cidade: " + (city.empty() ? std::string("escolher") : city), 30), x2 + pad, y - 70, bw, [src] {
+      g_native_src = src;
+      NativeGoTo(NativePage::City);
+    });
+  };
+  side("ORIGEM", g_src, true, top - 55);
+  ui.Button("Usar a cidade atual", x2 + pad, top - 163, bw, [] { PickCurrentCity(); });
+  side("DESTINO", g_dst, false, top - 215);
+  ui.Button("Maior rota possível", x2 + pad, top - 323, bw, [] { PickLongestRoute(); });
+  // cargo
+  ui.Card("CARGA", x3, top, w, h);
+  const char* note = NativeCargoOptions();
+  if (CargoPicked()) {
+    const RouteOption& o = g_options[g_selected];
+    char mass[32];
+    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+    ui.Text("txt.emph.left", Shorten(CargoName(g_data, o.cargo), 30) + "  (" + mass + ")", x3 + pad, top - 60, bw);
+    ui.Text("txt.normal.left", Shorten("De: " + o.src_name, 44), x3 + pad, top - 92, bw);
+    ui.Text("txt.normal.left", Shorten("Para: " + o.dst_name, 44), x3 + pad, top - 120, bw);
+    if (o.off_market) ui.Text("txt.normal.left", "Fora do mercado dessas empresas", x3 + pad, top - 148, bw);
+  } else {
+    ui.Text("txt.normal.center", note ? "Sem cargas para listar" : "Nenhuma carga escolhida", x3, top - 100, w);
+  }
+  if (note) ui.Text("txt.normal.center", Shorten(note, 52), x3, top - 190, w);
+  else ui.Button("Escolher carga (" + std::to_string(g_options.size()) + ")", x3 + pad, top - h + 145, bw, [] { NativeGoTo(NativePage::Cargo); });
+  ui.Toggle("Qualquer carga", x3 + pad, top - h + 61, bw, &g_any_cargo);
+  // options
+  const int oy = top - h - 10;
+  ui.Card("AO INICIAR O SERVIÇO", x1, oy, 1220, 110);
+  const int ow = 290, ox = x1 + 15;
+  ui.Toggle("Teleportar até a origem", ox, oy - 56, ow, &g_teleport);
+  ui.Toggle("Soltar o freio de mão", ox + 300, oy - 56, ow, &g_release_brake);
+  ui.Toggle("7h e tempo limpo", ox + 600, oy - 56, ow, &g_morning);
+  ui.Toggle("Abastecer", ox + 900, oy - 56, ow, &g_refuel);
+  // actions
+  const bool editing = g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size());
+  if (CargoPicked()) {
+    ui.Button(editing ? "Salvar alterações na favorita" : "Salvar como favorita", x1, 176, 330, [editing] {
+      if (editing) {
+        g_favorites[g_editing] = SelectedRoute();
+        SaveFavoritesFile();
+        g_status = "Favorita atualizada.";
+        g_status_error = false;
+        g_editing = -1;
+        NativeGoTo(NativePage::Favorites);
+      } else {
+        AddFavorite(SelectedRoute());
+      }
+    });
+    if (CanStart(jd.on_job))
+      ui.Button("INICIAR SERVIÇO", 520, 182, 400, [] {
+        g_pending = Pending::Start;
+        g_native_leave = true;
+      }, true);
+  }
+  if (!CargoPicked() || !CanStart(jd.on_job))
+    ui.Text("txt.normal.center", jd.on_job ? "Cancele o serviço atual para iniciar outro." : "Escolha origem, destino e uma carga para iniciar.", 470, 176, 500, 30);
+}
+
+void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
+  const int x = 110, w = 1220;
+  ui.Card("ROTAS FAVORITAS", x, 750, w, 560);
+  if (jd.on_job)
+    ui.Button("Salvar o serviço atual", x + 30, 700, 300, [] {
+      SPF_JobConstants jc{};
+      g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+      AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
+    });
+  if (CargoPicked()) ui.Button("Salvar a rota do planejador", x + 340, 700, 330, [] { AddFavorite(SelectedRoute()); });
+  if (g_favorites.empty()) {
+    ui.Text("txt.normal.center", "Nenhuma favorita ainda. Em Planejar, escolha a rota e a carga e salve.", x, 480, w);
+    return;
+  }
+  const int rows = 10, count = static_cast<int>(g_favorites.size()), pages = (count + rows - 1) / rows;
+  g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
+  const bool can = CanStart(jd.on_job);
+  for (int i = g_native_list_page * rows, n = 0; i < count && n < rows; ++i, ++n) {
+    const Favorite& f = g_favorites[i];
+    const int y = 655 - n * 44;
+    char mass[32];
+    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
+    ui.Text("txt.emph.left", Shorten(CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city), 46), x + 30, y, 420, 30);
+    ui.Text("txt.normal.left", Shorten(CargoName(g_data, f.cargo), 36) + "  (" + mass + ")", x + 460, y, 330, 30);
+    if (can)
+      ui.Button("Iniciar", x + 800, y, 120, [i] {
+        if (ApplyRoute(g_favorites[i])) {
+          g_pending = Pending::Start; // same path as the planner's button
+          g_native_leave = true;
+        } else {
+          g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
+          g_status_error = true;
+        }
+      });
+    ui.Button("Editar", x + 930, y, 120, [i] {
+      ApplyRoute(g_favorites[i]);
+      g_editing = i;
+      NativeGoTo(NativePage::Planner);
+    });
+    ui.Button("Remover", x + 1060, y, 130, [i] {
+      g_favorites.erase(g_favorites.begin() + i);
+      SaveFavoritesFile();
+      g_editing = -1;
+      g_status = "Favorita removida.";
+      g_status_error = false;
+    });
+  }
+  if (pages > 1) {
+    if (g_native_list_page > 0) ui.Button("< Anterior", 430, 215, 180, [] { --g_native_list_page; });
+    ui.Text("txt.normal.center", "Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 620, 215, 200, 30);
+    if (g_native_list_page < pages - 1) ui.Button("Próxima >", 830, 215, 180, [] { ++g_native_list_page; });
+  }
+  if (jd.on_job) ui.Text("txt.normal.center", "Cancele o serviço atual para iniciar outro.", 470, 176, 500, 30);
+}
+
+void NativeCountryPage(NativeUi& ui) {
+  ui.Text("txt.big.bold.white.center", g_native_src ? "PAÍS DE ORIGEM" : "PAÍS DE DESTINO", 110, 772, 1220, 30);
+  const int count = static_cast<int>(g_data.countries.size()) + 1; // "all" first
+  NativeGrid(ui, count, 5, 12, 40, [&](int i, int x, int y, int w) {
+    Side& side = g_native_src ? g_src : g_dst;
+    if (i == 0) {
+      ui.Button("Todos os países", x, y, w, [&side] {
+        side.country.clear();
+        NativeGoTo(NativePage::City);
+      }, side.country.empty());
+      return;
+    }
+    const Named& c = g_data.countries[i - 1];
+    ui.Button(Shorten(c.name, 22), x, side.country == c.tok ? y + 6 : y, w, [&side, tok = c.tok] {
+      side.country = tok;
+      const Named* city = Find(g_data.cities, side.city);
+      if (city && city->parent != tok) side.city.clear();
+      NativeGoTo(NativePage::City); // the city comes next
+    }, side.country == c.tok);
+  });
+  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
+}
+
+void NativeCityPage(NativeUi& ui) {
+  Side& side = g_native_src ? g_src : g_dst;
+  const Named* country = Find(g_data.countries, side.country);
+  ui.Text("txt.big.bold.white.center", std::string(g_native_src ? "CIDADE DE ORIGEM" : "CIDADE DE DESTINO") + (country ? "  -  " + country->name : std::string()), 110, 772, 1220, 30);
+  std::vector<const Named*> cities;
+  for (const auto& c : g_data.cities)
+    if (side.country.empty() || c.parent == side.country) cities.push_back(&c);
+  NativeGrid(ui, static_cast<int>(cities.size()), 5, 12, 40, [&](int i, int x, int y, int w) {
+    const Named& c = *cities[i];
+    ui.Button(Shorten(c.name, 22), x, side.city == c.tok ? y + 6 : y, w, [&side, tok = c.tok, parent = c.parent] {
+      side.city = tok;
+      side.country = parent;
+      NativeGoTo(NativePage::Planner);
+    }, side.city == c.tok);
+  });
+  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
+  ui.Button("Trocar de país", 1150, 150, 180, [] { NativeGoTo(NativePage::Country); });
+}
+
+void NativeCargoPage(NativeUi& ui) {
+  ui.Text("txt.big.bold.white.center", "CARGA  -  " + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city), 110, 772, 1220, 30);
+  const char* note = NativeCargoOptions();
+  if (note) ui.Text("txt.normal.center", note, 110, 480, 1220);
+  else
+    NativeGrid(ui, static_cast<int>(g_options.size()), 2, 12, 40, [&](int i, int x, int y, int w) {
+      const RouteOption& o = g_options[i];
+      char mass[32];
+      std::snprintf(mass, sizeof mass, "%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+      const std::string label = Shorten(CargoName(g_data, o.cargo), 24) + " (" + mass + ")  " + Shorten(o.src_name, 13) + " -> " + Shorten(o.dst_name, 13) + (o.off_market ? " *" : "");
+      ui.Button(label, x, g_selected == i ? y + 6 : y, w, [i] {
+        g_selected = i;
+        NativeGoTo(NativePage::Planner);
+      }, g_selected == i);
+    });
+  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
+  ui.Text("txt.normal.left", "* fora do mercado dessas empresas", 1030, 150, 300, 30);
+}
+
+// Writes the script of the current page. False if the file could not be written.
 bool WriteNativeScript() {
   DeleteFileA(NativeScriptPath().c_str());
   ++g_native_serial;
-  const std::string unit = "_nameless.rpl" + std::to_string(g_native_serial); // every name of this opening starts with it
-  const std::string wnd = unit + ".wnd", grp = unit + ".grp";
-  const int rows = std::min(static_cast<int>(g_favorites.size()), kNativeMaxFavs);
-  const int height = 150 + std::max(rows, 1) * 46 + 70, top = 450 + height / 2, bottom = top - height, left = 360, right = 1080;
+  g_native_buttons.clear();
+  NativeUi ui;
+  ui.unit = "_nameless.rpl" + std::to_string(g_native_serial); // every name of this opening starts with it
+  ui.group = ui.unit + ".grp";
   SPF_JobData jd{};
   if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-  std::string info = "Nenhum serviço em andamento. Escolha uma rota favorita para iniciar.";
-  if (jd.on_job) {
-    SPF_JobConstants jc{};
-    g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
-    info = std::string("Serviço atual: ") + jc.cargo_name + ", " + jc.source_city + " -> " + jc.destination_city;
+  // the frame every page shares, as in the game's F1 screen
+  ui.Text("txt.window.bcg_rect4", "@@clr_bg_main@@", 40, 860, 1360, 820, 1);
+  ui.Text("txt.big.left", "@@ui_paused@@", 60, 850, 300, 30);
+  ui.Text("txt.big.center", "PLANEJADOR DE ROTAS", 420, 850, 600, 30);
+  const bool planner = g_native_page != NativePage::Favorites;
+  ui.Button("Planejar", 495, planner ? 816 : 810, 220, [] { NativeGoTo(NativePage::Planner); }, planner);
+  ui.Button("Favoritas (" + std::to_string(g_favorites.size()) + ")", 725, planner ? 810 : 816, 220, [] { NativeGoTo(NativePage::Favorites); }, !planner);
+  switch (g_native_page) {
+    case NativePage::Planner: NativePlannerPage(ui, jd); break;
+    case NativePage::Favorites: NativeFavoritesPage(ui, jd); break;
+    case NativePage::Country: NativeCountryPage(ui); break;
+    case NativePage::City: NativeCityPage(ui); break;
+    case NativePage::Cargo: NativeCargoPage(ui); break;
   }
-  std::vector<std::string> names;
-  std::string kids;
-  g_native_buttons.clear();
-  const auto add = [&](const std::string& name, const std::string& node) {
-    names.push_back(name);
-    kids += node;
-  };
-  add(unit + ".bcg", SiiLabel(unit + ".bcg", "txt.window.bcg_rect4", "@@clr_bg_main@@", left + 1, right - 1, top - 1, bottom + 2, 1, 1, grp));
-  add(unit + ".title", SiiLabel(unit + ".title", "txt.title.center", "PLANEJADOR DE ROTAS", left + 40, right - 40, top - 10, top - 42, 10, 3, grp));
-  add(unit + ".info", SiiLabel(unit + ".info", "txt.normal.center", info, left + 30, right - 30, top - 64, top - 96, 11, 2, grp));
-  for (int i = 0; i < rows; ++i) {
-    const Favorite& f = g_favorites[i];
-    const int y = top - 124 - i * 46;
-    const std::string n = std::to_string(i);
-    add(unit + ".row" + n, SiiLabel(unit + ".row" + n, "txt.normal.left", CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city) + "   ·   " + CargoName(g_data, f.cargo),
-                                           left + 30, right - 190, y, y - 30, 400 + i, 2, grp));
-    add(unit + ".go" + n, SiiButton(unit + ".go" + n, "Iniciar", right - 170, right - 30, y, kNativeFavBase + i, grp));
-    g_native_buttons.push_back(kNativeFavBase + i);
-  }
-  if (rows == 0)
-    add(unit + ".none", SiiLabel(unit + ".none", "txt.normal.center", "Nenhuma rota favorita ainda. Salve rotas pelo F8.", left + 30, right - 30, top - 124, top - 154, 400, 2, grp));
-  add(unit + ".close", SiiButton(unit + ".close", "Fechar", 620, 820, bottom + 52, kNativeClose, grp));
-  g_native_buttons.push_back(kNativeClose);
-
-  std::string group_body = " fitting: false\n my_children: " + std::to_string(names.size()) + "\n";
-  for (size_t i = 0; i < names.size(); ++i) group_body += " my_children[" + std::to_string(i) + "]: " + names[i] + "\n";
-  const std::string script =
-      "SiiNunit\n{\n" +
-      SiiNode("ui::window", wnd,
-              " window_handler: null\n clip_children: true\n keep_aspect: center\n user_string_data: \"\"\n first_direction_focus_id: 0\n fitting: false\n my_children: 1\n my_children[0]: " + grp + "\n",
-              0, 1440, 900, 0, 0, 0, "null", true) +
-      SiiNode("ui::group", grp, group_body, left, right, top, bottom, 111, 0, wnd, true) + kids + "}\n";
-  const std::string path = NativeScriptPath();
+  if (!g_status.empty()) ui.Text(g_status_error ? "txt.emph.left" : "txt.normal.left", Shorten(g_status, 120), 110, 122, 1220, 26);
+  ui.Button("Retomar", 620, 92, 200, [] { g_native_leave = true; });
   CreateDirectoryA(NativeScriptDir().c_str(), nullptr);
+  const std::string script = ui.Script();
   FILE* f = nullptr;
-  if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return false;
+  if (fopen_s(&f, NativeScriptPath().c_str(), "wb") != 0 || !f) return false;
   const bool ok = std::fwrite(script.data(), 1, script.size(), f) == script.size();
   std::fclose(f);
   return ok;
 }
 
-// A window of ours has no handler class to be told about clicks: a click is the left button released
-// while a button has the pointer over it (bit 24 of its flags). Flag changes are logged for now.
-void NativeClick(uint32_t id) {
-  Log("janela do jogo (experimento): clique no botão " + std::to_string(id));
-  CloseNative(); // everything a button does needs the game running again
-  if (id < kNativeFavBase || id >= kNativeFavBase + g_favorites.size()) return;
-  SPF_JobData jd{};
-  if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-  if (!CanStart(jd.on_job)) {
-    game::ShowHint("<color value=@@clr_sel@@>Planejador de rotas<br><color value=@@clr_txt@@>Cancele o serviço atual para iniciar outro.");
-    g_hint_off_in = 480;
-  } else if (ApplyRoute(g_favorites[id - kNativeFavBase])) {
-    g_pending = Pending::Start; // same path as the F8 planner's button
+// Shows the current page (again). The game stays paused while the window is swapped.
+bool ShowNative() {
+  if (g_native_window) game::CloseGameWindow(&g_native_window);
+  if (!WriteNativeScript()) {
+    Log("janela do jogo: não consegui gravar " + NativeScriptPath());
+    return false;
   }
+  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", ("/home/routeplanner/" + NativeScriptName()).c_str());
+  if (why != 0) Log("janela do jogo: não abriu (motivo " + std::to_string(why) + ")");
+  return why == 0;
 }
 
-void WatchNativeButtons() {
-  static std::map<uint32_t, uint32_t> last;
-  static bool was_down = false;
-  static int logged = 0;
-  if (!g_native_window) {
-    last.clear();
-    was_down = false, logged = 0;
-    return;
-  }
-  DWORD pid = 0;
-  GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-  const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-  uint32_t hot = 0;
-  for (const uint32_t id : g_native_buttons) {
-    const uint32_t flags = game::WidgetFlags(g_native_window, id);
-    const auto known = last.find(id);
-    if (known != last.end() && known->second != flags && logged < 200) {
-      char line[96];
-      std::snprintf(line, sizeof line, "botão %u: flags %08X -> %08X%s", id, known->second, flags, down ? " (botão do mouse apertado)" : "");
-      Log(line);
-      ++logged;
-    }
-    last[id] = flags;
-    if (flags & (1u << 24)) hot = id;
-  }
-  const bool released = was_down && !down;
-  was_down = down;
-  if (released && hot) NativeClick(hot);
+void CloseNative() {
+  const bool closed = !g_native_window || game::CloseGameWindow(&g_native_window);
+  const bool resumed = g_native_paused && game::PauseForUi(false);
+  Log(std::string("janela do jogo: ") + (closed ? "fechada" : "falha ao fechar") + (g_native_paused ? (resumed ? ", jogo retomado" : ", FALHA ao retomar o jogo") : ""));
+  g_native_paused = false;
+  g_native_buttons.clear();
+  DeleteFileA(NativeScriptPath().c_str());
 }
 
 void NativeExperiment() {
-  WatchNativeButtons();
+  static bool was_down = false;
+  if (g_native_window) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    const bool released = was_down && !down;
+    was_down = down;
+    if (released) {
+      std::function<void()> action;
+      for (const auto& [id, act] : g_native_buttons)
+        if (game::WidgetFlags(g_native_window, id) & (1u << 24)) action = act; // copied: running it replaces the list
+      if (action) {
+        g_native_leave = false;
+        action();
+        if (g_native_leave || !ShowNative()) CloseNative();
+      }
+    }
+  } else {
+    was_down = false;
+  }
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
     CloseNative();
     return;
   }
-  if (!WriteNativeScript()) {
-    Log("janela do jogo (experimento): não consegui gravar " + NativeScriptPath());
-    return;
-  }
   g_native_paused = game::PauseForUi(true);
-  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", ("/home/routeplanner/" + NativeScriptName()).c_str());
-  Log("janela do jogo (experimento): " + (why == 0 ? std::string("aberta") : "não abriu (motivo " + std::to_string(why) + ")") +
-      (g_native_paused ? ", jogo pausado para o cursor" : ", NÃO consegui pausar o jogo"));
-  if (why != 0 && g_native_paused) g_native_paused = !game::PauseForUi(false);
+  if (!g_native_paused) Log("janela do jogo: NÃO consegui pausar o jogo (sem cursor)");
+  if (g_native_page != NativePage::Favorites) NativeGoTo(NativePage::Planner);
+  if (!ShowNative()) CloseNative();
+  else Log("janela do jogo: aberta");
 }
 
 void Key(int key) {
