@@ -533,3 +533,9 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   que entrega origem/destino (a rota) ao mapa.
 - **Etapa 1 (plugin):** página "Mapa" na tela nativa (botão "Ver no mapa (experimento)" no cartão ROTA) com um dos três widgets, trocável
   por botões, para descobrir se desenham e aceitam arrastar/zoom sem handler. NÃO testado em jogo.
+- **Etapa 1, crash (2026-10-06):** abrir a página com `ui_world_map` derrubou o jogo: "array_t<vec_t<float,2>>: Index outside array
+  boundaries: 8 >= 8", pilha 0x100e405 ← 0x100d706 ← 0x116d3ce ← 0x101100c ← desenho de janelas (0x37a313). A função 0x100d7d0 (nomes de
+  países, só com o bit 22 da máscara) indexa a tabela de níveis `[[exe+0x36ae6d8]+0x98]+0x38` com `[mapa+0x1e8]` (nível de zoom), que
+  nasce 8 no construtor (0xffc705), um além do último. As telas do jogo chamam antes `0x10005c0(mapa, nível)` (virtual; grava +0x1e8, pega
+  a escala em +0x1e0 da tabela de floats `…+0x10` e chama 0x1000750). Plugin: `game::SetMapZoom` logo depois de abrir a janela (mesmo
+  quadro, antes do desenho), nível inicial 4, e botões "Zoom −/+" que mudam o mapa aberto sem recriar a janela. NÃO testado em jogo.

@@ -865,6 +865,8 @@ std::atomic<bool> g_native_toggle{false};
 
 enum class NativePage { Planner, Favorites, Place, Cargo, Map };
 int g_native_map_kind = 0; // EXPERIMENT (route preview, stage 1): which of the game's map widgets the map page shows
+int g_native_map_zoom = 4; // its zoom level (higher = closer); a map must be given one before it is first drawn
+bool g_native_keep = false; // the action just run changed the open window itself: no rebuild
 NativePage g_native_page = NativePage::Planner;
 bool g_native_src = true;     // which side the place page fills
 int g_native_list_page = 0;   // page of a paged list
@@ -1408,6 +1410,13 @@ void NativeMapPage(NativeUi& ui) {
   ui.Node(kinds[g_native_map_kind], " show_country_names: true\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
   for (int i = 0; i < 3; ++i) ui.TextButton(kinds[i], kX1 + 400 + i * 190, 96, 180, [i] { g_native_map_kind = i; }, g_native_map_kind == i);
+  for (const int step : {-1, 1})
+    ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
+      const int now = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom + step); // on the map that is on screen
+      if (now >= 0) g_native_map_zoom = now;
+      Log("mapa: zoom " + std::to_string(now));
+      g_native_keep = true;
+    });
 }
 
 void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
@@ -1573,6 +1582,15 @@ bool ShowNative() {
   else if ((why = game::OpenGameWindow(&g_native_window, ("rpl" + std::to_string(g_native_serial)).c_str(), ("/home/routeplanner/" + NativeScriptName()).c_str())) != 0)
     Log("janela do jogo: não abriu (motivo " + std::to_string(why) + ")");
   g_typing = why == 0 && g_native_page == NativePage::Cargo;
+  // a map without a zoom level takes the game down when it is drawn (game.h): set it before this frame is rendered
+  if (why == 0 && g_native_page == NativePage::Map) {
+    const int zoom = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom);
+    Log("mapa: zoom inicial " + std::to_string(zoom));
+    if (zoom < 0) { // not safe to show: take it down before anything draws it
+      game::CloseGameWindow(&g_native_window);
+      why = -2;
+    }
+  }
   if (why != 0) {
     g_native_window = old; // nothing new: the caller closes what there is
     return false;
@@ -1632,9 +1650,9 @@ void NativeExperiment() {
       for (const auto& [id, act] : g_native_buttons)
         if (game::WidgetFlags(g_native_window, id) & (1u << 24)) action = act; // copied: running it replaces the list
       if (action) {
-        g_native_leave = false;
+        g_native_leave = g_native_keep = false;
         action();
-        if (g_native_leave || !ShowNative()) CloseNative();
+        if (g_native_leave || (!g_native_keep && !ShowNative())) CloseNative();
       }
     }
   } else {

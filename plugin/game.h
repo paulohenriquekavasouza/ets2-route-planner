@@ -523,6 +523,31 @@ inline uint32_t WidgetFlags(void* window, uint32_t id) {
   }
 }
 
+// The game's map widgets (ui_world_map, ui_job_map, ui_map) keep their zoom level at +0x1e8. A new
+// widget has 8 there, one past the last level, and drawing it like that takes the game down
+// ("Index outside array boundaries: 8 >= 8" in the country names, crash of 2026-10-06): the game's own
+// screens set a level first, with 0x10005c0(map, level) (also fills the scale at +0x1e0 from the table
+// of levels at [[exe+0x36ae6d8]+0x98]+0x10 and refreshes the widget). Higher = closer.
+// Returns the level set (clamped to the table), or -1 if the widget or the function is not there.
+constexpr uintptr_t MAP_SET_ZOOM = 0x10005c0;
+constexpr unsigned char kMapZoomSig[10] = {0x48, 0x83, 0xec, 0x48, 0x4c, 0x8b, 0xc9, 0x3b, 0x91, 0xe8};
+inline int SetMapZoom(void* window, uint32_t id, int level) {
+  if (std::memcmp(At<const void*>(MAP_SET_ZOOM), kMapZoomSig, sizeof kMapZoomSig) != 0) return -1;
+  __try {
+    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const data = owner ? Ptr(owner, 0x98) : nullptr;
+    if (!map || !data) return -1;
+    const int levels = static_cast<int>(*reinterpret_cast<uint64_t*>(data + 0x10 + 0x10));
+    if (levels < 1 || levels > 64) return -1;
+    level = level < 0 ? 0 : level >= levels ? levels - 1 : level;
+    At<void (*)(void*, int)>(MAP_SET_ZOOM)(map, level);
+    return level;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+}
+
 inline bool CloseGameWindow(void** slot) {
   __try {
     void* const mgr = *At<void**>(UI_MANAGER);
