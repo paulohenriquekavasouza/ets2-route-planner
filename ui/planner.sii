@@ -1,0 +1,131 @@
+SiiNunit
+{
+ui::window : _nameless.rpl.wnd {
+ window_handler: null
+ clip_children: true
+ keep_aspect: center
+ user_string_data: ""
+ first_direction_focus_id: 0
+ fitting: false
+ my_children: 1
+ my_children[0]: _nameless.rpl.grp
+ coords_l: 0
+ coords_r: 1440
+ coords_t: 900
+ coords_b: 0
+ area_l: 0
+ area_r: 1440
+ area_t: 900
+ area_b: 0
+ id: 0
+ layer: 0
+ tab: -1
+ pointer: -1
+ my_parent: null
+}
+
+ui::group : _nameless.rpl.grp {
+ fitting: false
+ my_children: 4
+ my_children[0]: _nameless.rpl.bcg
+ my_children[1]: _nameless.rpl.title
+ my_children[2]: _nameless.rpl.body
+ my_children[3]: _nameless.rpl.btn
+ coords_l: 409
+ coords_r: 1031
+ coords_t: 614
+ coords_b: 286
+ area_l: 409
+ area_r: 1031
+ area_t: 614
+ area_b: 286
+ id: 111
+ layer: 0
+ tab: -1
+ pointer: -1
+ my_parent: _nameless.rpl.wnd
+}
+
+ui::text_common : _nameless.rpl.bcg {
+ value: "@@clr_bg_main@@"
+ look_template: txt.window.bcg_rect4
+ text: ""
+ coords_l: 410
+ coords_r: 1030
+ coords_t: 613
+ coords_b: 288
+ area_l: 1
+ area_r: 0
+ area_t: 0
+ area_b: 1
+ id: 1
+ layer: 1
+ tab: -1
+ pointer: -1
+ my_parent: _nameless.rpl.grp
+}
+
+ui::text_common : _nameless.rpl.title {
+ value: "PLANEJADOR DE ROTAS"
+ look_template: txt.title.center
+ text: ""
+ coords_l: 450
+ coords_r: 990
+ coords_t: 605
+ coords_b: 573
+ area_l: 1
+ area_r: 0
+ area_t: 0
+ area_b: 1
+ id: 10
+ layer: 3
+ tab: -1
+ pointer: -1
+ my_parent: _nameless.rpl.grp
+}
+
+ui::text_common : _nameless.rpl.body {
+ value: "Experimento: esta janela foi criada pelo plugin<br>com a interface do próprio jogo.<br><br>Home fecha."
+ look_template: txt.normal.center
+ text: ""
+ coords_l: 440
+ coords_r: 1000
+ coords_t: 540
+ coords_b: 380
+ area_l: 1
+ area_r: 0
+ area_t: 0
+ area_b: 1
+ id: 11
+ layer: 2
+ tab: -1
+ pointer: -1
+ my_parent: _nameless.rpl.grp
+}
+
+ui::button_common : _nameless.rpl.btn {
+ value: "Botão de teste"
+ value2: ""
+ look_template: btn.normal
+ n_pml: ""
+ s_pml: ""
+ s2_pml: ""
+ d_pml: ""
+ p_pml: ""
+ button_type: normal
+ coords_l: 620
+ coords_r: 820
+ coords_t: 345
+ coords_b: 313
+ area_l: 1
+ area_r: 0
+ area_t: 0
+ area_b: 1
+ id: 200
+ layer: 4
+ tab: -1
+ pointer: -1
+ my_parent: _nameless.rpl.grp
+}
+
+}

@@ -21,6 +21,10 @@ Push-Location $build; & (Join-Path $build 'Release\routes_test.exe'); $rc = $LAS
 if ($rc -ne 0) { throw 'routes_test failed' }
 
 New-Item -ItemType Directory -Force (Join-Path $dest 'core') | Out-Null
+# experiment: our script for a window of the game's own UI; the game sees Documents as /home
+$home_ui = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Euro Truck Simulator 2\routeplanner'
+New-Item -ItemType Directory -Force $home_ui | Out-Null
+Copy-Item (Join-Path $PSScriptRoot 'ui\planner.sii') $home_ui -Force
 python (Join-Path $PSScriptRoot 'tools\gen_routes.py') $extract (Join-Path $dest 'routes.tsv')
 
 # --- host first (so a new host never meets an old core layout for long): a loaded DLL cannot be

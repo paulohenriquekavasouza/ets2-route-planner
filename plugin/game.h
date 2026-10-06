@@ -386,6 +386,55 @@ inline bool HideHint() {
   }
 }
 
+// EXPERIMENT: a window of the game's own UI, built from a script of ours. The game's screens are
+// SiiNunit scripts (/ui/*.sii: ui::window, ui::text_common, ui::button_common... with look templates) and
+// are created, shown and closed like this (adviser options, 0x68cda0):
+//   fs = 0x1536e0(4); fs->vt[4](fs, char** path)                       does the file exist
+//   0x374f20(void** tmp, char** name, char** layer ("hud"), 0x100, char** path, u8 0x80)   build the window
+//   0x33cb90(void** slot, void** tmp)                                  take ownership
+//   0x38c080([exe+0x36ae6f8] (UI manager), window, 0)                  show
+//   0x38bbc0(UI manager, window); 0x108650(void** slot)                close and let go
+// The user's game folder (Documents) is mounted as /home, so the script needs no mod.
+constexpr uintptr_t UI_MANAGER = 0x36ae6f8, UI_FS = 0x1536e0, UI_CREATE = 0x374f20, UI_ASSIGN = 0x33cb90, UI_SHOW = 0x38c080, UI_REMOVE = 0x38bbc0,
+                    UI_RELEASE = 0x108650;
+constexpr Sig kUiSigs[] = {
+    {UI_FS, {0x48, 0x83, 0xec, 0x48, 0x48, 0x63, 0xd1, 0x48, 0x3b, 0x15}},     {UI_CREATE, {0x4c, 0x8b, 0xdc, 0x49, 0x89, 0x5b, 0x18, 0x49, 0x89, 0x73}},
+    {UI_ASSIGN, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}}, {UI_SHOW, {0x48, 0x89, 0x54, 0x24, 0x10, 0x55, 0x56, 0x41, 0x56, 0x48}},
+    {UI_REMOVE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x54, 0x24, 0x10}}, {UI_RELEASE, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20}},
+};
+// 0 = shown; 1 game not recognised, 2 no UI manager, 3 script not found by the game, 4 the game built nothing, 9 exception.
+inline int OpenGameWindow(void** slot, const char* name, const char* path) {
+  for (const Sig& s : kUiSigs)
+    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return 1;
+  __try {
+    void* const mgr = *At<void**>(UI_MANAGER);
+    if (!mgr) return 2;
+    void* const fs = At<void* (*)(int)>(UI_FS)(4);
+    if (!fs || !(*reinterpret_cast<bool (***)(void*, const char**)>(fs))[4](fs, &path)) return 3;
+    void* tmp = nullptr;
+    const char* layer = "hud";
+    At<void** (*)(void**, const char**, const char**, uint32_t, const char**, uint8_t)>(UI_CREATE)(&tmp, &name, &layer, 0x100, &path, 0x80);
+    if (!tmp) return 4;
+    At<void** (*)(void**, void**)>(UI_ASSIGN)(slot, &tmp);
+    At<void (*)(void*, void*, int)>(UI_SHOW)(mgr, *slot, 0);
+    return 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 9;
+  }
+}
+inline bool CloseGameWindow(void** slot) {
+  __try {
+    void* const mgr = *At<void**>(UI_MANAGER);
+    if (!mgr || !*slot) return false;
+    At<void (*)(void*, void*)>(UI_REMOVE)(mgr, *slot);
+    At<void (*)(void**)>(UI_RELEASE)(slot);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    *slot = nullptr;
+    return false;
+  }
+}
+
 inline bool CancelJob() {
   __try {
     uint8_t* const ctrl = *At<uint8_t**>(CTRL);

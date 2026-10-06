@@ -835,6 +835,26 @@ void RunPending() {
   }
 }
 
+// EXPERIMENT (Home): the planner as a window of the game's own UI (game::OpenGameWindow). For now it only
+// shows a script of ours; F8 stays the real planner.
+// ponytail: the key is read straight from Windows, so the host and SPF's settings.json stay untouched.
+void* g_native_window = nullptr;
+void NativeExperiment() {
+  static bool was_down = false;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+  const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+  const bool pressed = down && !was_down;
+  was_down = down;
+  if (!pressed) return;
+  if (g_native_window) {
+    Log(std::string("janela do jogo (experimento): ") + (game::CloseGameWindow(&g_native_window) ? "fechada" : "falha ao fechar"));
+    return;
+  }
+  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", "/home/routeplanner/planner.sii");
+  Log("janela do jogo (experimento): " + (why == 0 ? std::string("aberta") : "não abriu (motivo " + std::to_string(why) + ")"));
+}
+
 void Key(int key) {
   if (key == CORE_KEY_PLANNER) g_toggle = true;
 }
@@ -850,6 +870,7 @@ void Update() {
     g_mouse_taken = open;
   }
   std::lock_guard lock(g_mu);
+  NativeExperiment();
   if (g_cargo_pending) FilterUnknownCargo();
   if (g_pending != Pending::None) RunPending();
   if (g_start_in >= 0 && g_start_in-- == 0) {
@@ -877,8 +898,9 @@ void Update() {
 void DrawPlanner(SPF_UI_API* ui) { Draw(ui, nullptr); }
 
 // The DLL is going away: give the mouse back. Nothing here calls into the game.
-void Shutdown(bool) {
+void Shutdown(bool game_calls_ok) {
   std::lock_guard lock(g_mu);
+  if (game_calls_ok && g_native_window) game::CloseGameWindow(&g_native_window); // on a framework unload it stays open: no game calls there
   if (g_core && g_core->ui && g_mouse_taken) {
     g_api.SetMouseBlocked(false);
     g_core->ui->UI_SetMouseOverride(false);

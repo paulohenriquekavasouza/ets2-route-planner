@@ -422,3 +422,19 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Correções: o núcleo ajusta a janela ao conteúdo a cada quadro (`UI_SetWindowSize(kW + 2·margem, fim do conteúdo, ALWAYS)`),
   valendo também com hospedeira antiga; caixa de marcação própria `Check` (âmbar com tique escuro / cinza), desenhada com o draw list.
 - Com a hospedeira nova: sem barra de título, fontes `rp_small` e `rp_title`. Essas duas correções não foram vistas em jogo antes de salvar.
+
+## EXPERIMENTO (após a v2.7, 2026-10-05): janela com a interface do próprio jogo, no Home
+- Pedido: abrir o planejador usando a UI do jogo (como a tela de pausa do F1), experimental, no Home; F8 fica como está.
+- **Como o jogo faz as telas:** scripts SiiNunit em /ui/*.sii (base_share.scs; extraídos em `C:\Users\Paulo\ets2-ui\ui`, ~290 arquivos).
+  Raiz `ui::window` (1440×900 virtuais, origem embaixo à esquerda) com `window_handler` (classe C++ do jogo, ex. `pause_hdl`, `msgbox_hdl`)
+  ou `null` (72 scripts); filhos `ui::group`, `ui::text_common` (value + look_template: txt.title.center, txt.normal.center,
+  txt.window.bcg_rect4…), `ui::text` (marcação crua), `ui::button_common` (look_template btn.normal, id), `ui::linear_layout`, `ui::button_row`.
+  A tela do F1 é `/ui/pause.sii` (83 KB, handler próprio).
+- **Funções (0x68cda0, opções do conselheiro):** fs = 0x1536e0(4), fs->vt[4](fs, char** caminho) = existe;
+  0x374f20(void** tmp, char** nome, char** camada "hud", 0x100, char** caminho, u8 0x80) cria; 0x33cb90(slot, tmp) assume a posse;
+  0x38c080([exe+0x36ae6f8], janela, 0) mostra; 0x38bbc0(gerente, janela) + 0x108650(slot) fecha e solta.
+- A pasta Documentos do jogo é montada como `/home` → o script vai em `Documents\Euro Truck Simulator 2\routeplanner\planner.sii`
+  (copiado pelo deploy.ps1 de `ui/planner.sii`), sem precisar de mod.
+- **Plugin (etapa 1):** `game::OpenGameWindow/CloseGameWindow`; Home (lido direto do Windows, sem mexer na hospedeira) abre/fecha uma
+  janela estática: fundo, título, texto e um botão sem ação. NÃO testado em jogo.
+- Próximas etapas se a 1 funcionar: achar widgets por id, trocar textos, detectar clique dos botões (sem handler C++), listas.
