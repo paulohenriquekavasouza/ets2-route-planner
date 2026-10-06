@@ -1236,11 +1236,11 @@ void NativePlacePage(NativeUi& ui) {
   Side& side = g_native_src ? g_src : g_dst;
   ui.Title(g_native_src ? "LOCAL DE ORIGEM" : "LOCAL DE DESTINO", 90, 772, 1260, 30, kNFontBold, kNAmber);
   const int top = 738, h = 600;
-  ui.Card("PAÍS", kX1, top, 400, h);
-  const int rows = 18, cw = 184;
+  ui.Card("PAÍS", kX1, top, 480, h);
+  const int rows = 18, cw = 224;
   for (int i = 0; i < static_cast<int>(g_data.countries.size()) && i < 2 * rows; ++i) {
     const Named& c = g_data.countries[i];
-    ui.Button(Layers({At(8, 5) + Flag(c.parent, 27, 18), LeftText(Shorten(c.name, 18), 44)}), kX1 + 12 + (i / rows) * (cw + 8), top - 46 - (i % rows) * 30, cw, 28, [&side, tok = c.tok] {
+    ui.Button(Layers({At(8, 5) + Flag(c.parent, 27, 18), LeftText(Shorten(c.name, 24), 44)}), kX1 + 12 + (i / rows) * (cw + 8), top - 46 - (i % rows) * 30, cw, 28, [&side, tok = c.tok] {
       side.country = tok;
       const Named* city = Find(g_data.cities, side.city);
       if (city && city->parent != tok) side.city.clear();
@@ -1248,7 +1248,7 @@ void NativePlacePage(NativeUi& ui) {
     }, side.country == c.tok, true);
   }
   const Named* country = Find(g_data.countries, side.country);
-  const int cx = kX1 + 415, cardw = 845;
+  const int cx = kX1 + 495, cardw = 765;
   ui.Card(country ? "CIDADES  -  " + country->name : std::string("CIDADES"), cx, top, cardw, h);
   if (!country) {
     ui.Title("Escolha um país à esquerda", cx, top - 280, cardw, 30, kNFont, kNDim);
@@ -1257,13 +1257,13 @@ void NativePlacePage(NativeUi& ui) {
     std::vector<const Named*> cities;
     for (const auto& c : g_data.cities)
       if (c.parent == side.country) cities.push_back(&c);
-    const int cols = 4, per_page = cols * rows, pages = std::max(1, (static_cast<int>(cities.size()) + per_page - 1) / per_page), w = 198;
+    const int cols = 4, per_page = cols * rows, pages = std::max(1, (static_cast<int>(cities.size()) + per_page - 1) / per_page), w = 178;
     g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
     for (int i = g_native_list_page * per_page, n = 0; i < static_cast<int>(cities.size()) && n < per_page; ++i, ++n) {
       const Named& c = *cities[i];
       const int companies = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [&](const Named& b) { return b.parent == c.tok; }));
       // filled column by column, so the alphabet reads downwards
-      ui.Button(Layers({LeftText(Shorten(c.name, 20), 12), RightText(std::to_string(companies))}), cx + 14 + (n / rows) * (w + 8), top - 46 - (n % rows) * 30, w, 28, [&side, tok = c.tok] {
+      ui.Button(Layers({LeftText(Shorten(c.name, 17), 12), RightText(std::to_string(companies))}), cx + 14 + (n / rows) * (w + 8), top - 46 - (n % rows) * 30, w, 28, [&side, tok = c.tok] {
         side.city = tok;
         NativeGoTo(NativePage::Planner);
       }, side.city == c.tok, true);
