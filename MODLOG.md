@@ -507,3 +507,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 
 ## v3.0.1 (master, 2026-10-05, ainda sem tag)
 - Tela nativa: sem o texto "Esc fecha" (o Esc continua fechando), sem o rótulo "trocar" nos botões de origem/destino, "Outras empresas" virou "Mudar empresas (N)".
+- "Limpar planejamento" à direita da linha de ações (espelho de "Salvar como favorita"): aparece quando há país/cidade/carga escolhidos ou uma favorita em edição; zera origem, destino, carga, "Qualquer carga", índice e a mensagem de status.

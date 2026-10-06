@@ -1228,6 +1228,21 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
         g_native_leave = true;
       }, true, 42);
   }
+  // the planner back to empty, when there is anything in it
+  if (!g_src.country.empty() || !g_src.city.empty() || !g_dst.country.empty() || !g_dst.city.empty() || CargoPicked() || editing)
+    ui.TextButton("Limpar planejamento", kX3 + kCardW - 300, ay - 5, 300, [] {
+      g_src = {};
+      g_dst = {};
+      g_options.clear();
+      g_options_for.clear();
+      g_selected = -1;
+      g_cargo_pending = false;
+      g_any_cargo = false;
+      g_cargo_filter[0] = 0;
+      g_native_letter = 0;
+      g_editing = -1;
+      g_status.clear();
+    });
   if (!CargoPicked() || !CanStart(jd.on_job))
     ui.Title(jd.on_job ? "Cancele o serviço atual para iniciar outro" : "Escolha a origem, o destino e uma carga para iniciar", 420, ay - 6, 600, 30, kNFont, kNDim);
 }
