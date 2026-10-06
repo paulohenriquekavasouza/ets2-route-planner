@@ -873,6 +873,8 @@ uint64_t g_native_route_until = 0; // tick count when the wait gives up; 0 = not
 float g_native_route_km = 0, g_native_route_min = 0; // what the GPS answered for the route on the map page
 int g_native_map_probe = 0; // frames until the map and the GPS are logged (diagnostics of the experiment)
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
+bool g_native_map_focus = false; // the two ends of the route are known: the map centres between them
+double g_native_map_center[2] = {}; // world x, z
 std::string g_native_map_note;
 bool g_native_keep = false; // the action just run changed the open window itself: no rebuild
 NativePage g_native_page = NativePage::Planner;
@@ -1211,6 +1213,15 @@ void NativeGpsPreview(bool on) {
     if (dst_company.empty() && b.parent == g_dst.city) dst_company = b.tok;
   }
   const uint64_t stops[2][2] = {{Token(src_company.c_str()), Token(g_src.city.c_str())}, {Token(dst_company.c_str()), Token(g_dst.city.c_str())}};
+  // the view: centred between the two companies, at the closest zoom that still shows both
+  double a[3], b[3];
+  g_native_map_focus = game::CompanyCenter(stops[0][0], stops[0][1], a) && game::CompanyCenter(stops[1][0], stops[1][1], b);
+  if (g_native_map_focus) {
+    g_native_map_center[0] = (a[0] + b[0]) / 2, g_native_map_center[1] = (a[2] + b[2]) / 2;
+    const double span = std::max(std::abs(a[0] - b[0]) * 0.75, std::abs(a[2] - b[2]) * 1.5); // the map area is about twice as wide as it is tall
+    // ponytail: the levels' reach in world units is an estimate from screenshots (level 7 shows all of Europe)
+    g_native_map_zoom = span < 3500 ? 5 : span < 13000 ? 6 : 7;
+  }
   const int set = game::SetGpsRoute(stops, 2);
   g_native_gps = set > 0;
   g_native_map_note = set == 2 ? "Rota enviada ao GPS do jogo: caminhão, " + CityLabel(g_src.city) + ", " + CityLabel(g_dst.city)
@@ -1618,10 +1629,19 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
 // called on the thread that installed them and need that thread to pump messages, hence a thread of
 // ours: it must be gone before this DLL is unloaded (WheelStop).
 std::atomic<bool> g_typing{false}; // the cargo page is on screen
+std::atomic<bool> g_esc{false};    // Esc was pressed with our screen open (kept from the game, which would open its menu)
 std::mutex g_typed_mu;
 std::string g_typed; // keys not yet used: lower-case letters, digits, ' ', '\b'
 
 LRESULT CALLBACK KeyProc(int code, WPARAM what, LPARAM data) {
+  if (code == HC_ACTION && (what == WM_KEYDOWN || what == WM_KEYUP) && reinterpret_cast<const KBDLLHOOKSTRUCT*>(data)->vkCode == VK_ESCAPE) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    if (pid == GetCurrentProcessId()) { // this hook only exists while our screen is open
+      if (what == WM_KEYDOWN) g_esc = true;
+      return 1;
+    }
+  }
   if (code == HC_ACTION && g_typing && (what == WM_KEYDOWN || what == WM_KEYUP)) {
     const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(data)->vkCode;
     const char ch = vk >= 'A' && vk <= 'Z' ? static_cast<char>(vk + 32) : (vk >= '0' && vk <= '9') || vk == VK_SPACE ? static_cast<char>(vk) : vk == VK_BACK ? '\b' : 0;
@@ -1649,6 +1669,7 @@ LRESULT CALLBACK WheelProc(int code, WPARAM what, LPARAM data) {
 void WheelStart() {
   if (g_wheel_thread.joinable()) return;
   g_wheel = 0;
+  g_esc = false;
   g_wheel_tid = 0;
   g_wheel_thread = std::thread([] {
     MSG msg;
@@ -1728,7 +1749,12 @@ bool ShowNative() {
   if (why == 0 && g_native_page == NativePage::Map) {
     const int zoom = game::SetMapZoom(g_native_window, 100000, g_native_map_zoom);
     const bool nav = zoom >= 0 && game::AttachMapNavigation(g_native_window, 100000); // so that it draws the GPS route
-    Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada ao mapa" : ", NÃO consegui ligar a navegação ao mapa"));
+    SPF_TruckData td{};
+    if (g_tel) g_core->telemetry->Tel_GetTruckData(g_tel, &td, sizeof td);
+    // the player's marker at the truck, the view on the route (or on the truck)
+    const bool placed = zoom >= 0 && game::SetMapPlacement(g_native_window, 100000, td.world_placement.position.x, td.world_placement.position.y, td.world_placement.position.z,
+                                                           td.world_placement.orientation.heading, g_native_map_focus ? g_native_map_center : nullptr);
+    Log("mapa: zoom inicial " + std::to_string(zoom) + (nav ? ", navegação ligada" : ", navegação NÃO ligada") + (placed ? ", posição do caminhão entregue" : ", posição NÃO entregue"));
     g_native_map_probe = 90;
     if (zoom < 0) { // not safe to show: take it down before anything draws it
       game::CloseGameWindow(&g_native_window);
@@ -1759,7 +1785,7 @@ void CloseNative() {
 }
 
 void NativeExperiment() {
-  static bool was_down = false, esc_was_down = false;
+  static bool was_down = false;
   if (!g_native_window) RunMapPreview();
   // DIAGNOSTICS: once a second, the bytes of the map widget on screen go to a file next to the plugin:
   // map_real.bin while the game's own map screen (key M) is open, map_ours.bin while our map page is.
@@ -1819,9 +1845,9 @@ void NativeExperiment() {
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
     const bool ours = pid == GetCurrentProcessId();
-    const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, esc = ours && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    const bool released = was_down && !down, esc_pressed = esc && !esc_was_down;
-    was_down = down, esc_was_down = esc;
+    const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    const bool released = was_down && !down, esc_pressed = g_esc.exchange(false);
+    was_down = down;
     const int wheel = ours ? g_wheel.exchange(0) : (g_wheel = 0, 0); // down = next page
     const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, std::max(g_native_pages, 1) - 1);
     std::string typed;
@@ -1857,7 +1883,8 @@ void NativeExperiment() {
       }
     }
   } else {
-    was_down = esc_was_down = false;
+    was_down = false;
+    g_esc = false;
   }
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {

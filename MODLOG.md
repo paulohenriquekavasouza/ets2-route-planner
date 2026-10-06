@@ -602,3 +602,12 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     (0x54a2a9; a da oferta de carga em 0x105f426): `[mapa+0xb0] = nav; 0x100e9b0(mapa, 0.0f); 0x10012e0(mapa, true);
     0x10009d0(mapa, nav); 0x1000a60(mapa)`. `0x10009d0` grava nav em `+0xb8` (nulo no nosso widget, preenchido no do jogo) e zera a rota
     guardada (+0x540, +0x568, +0x6d8). Plugin: `game::AttachMapNavigation`, chamado logo depois do zoom ao abrir a página. NÃO testado em jogo.
+- **Rota no mapa embutido: FUNCIONOU (2026-10-06, captura do usuário).** Com `AttachMapNavigation` o `ui_world_map` dentro da nossa janela
+  desenha a rota do GPS em vermelho com os marcadores 1 e 2 (Luxemburgo → Roterdã, 400 km / 5 h 42 no título). Home fecha e o GPS é limpo.
+  Defeitos vistos: (a) seta do jogador no lugar errado (perto de Frankfurt = origem do mundo: `+0x258` zerado); (b) a vista abre ampliada
+  demais, com ícones soltos, até girar a roda; (c) Esc abre o menu do jogo em vez de fechar a nossa tela.
+- **Correções:** `0x1000b00(mapa, placement*, bool, foco*, null)` (o HUD chama a cada quadro com o placement do caminhão, 0x689e3e):
+  grava o marcador do jogador (`+0x258` posição, `+0x268` rotação), o centro da vista (`+0x1b4`, = foco se dado) e põe a escala do nível
+  em vigor (`+0x1ac = +0x1e0`). Placement = o mesmo formato do teleporte. Plugin: `game::SetMapPlacement` com a posição da telemetria e o
+  foco no meio entre as duas empresas da rota; zoom inicial escolhido pelo tamanho da rota (5/6/7, limites estimados).
+  Esc: capturado pelo gancho de teclado enquanto a tela está aberta (`g_esc`), sem chegar ao jogo. NÃO testado em jogo.

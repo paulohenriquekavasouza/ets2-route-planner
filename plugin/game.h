@@ -699,6 +699,49 @@ inline bool AttachMapNavigation(void* window, uint32_t id) {
   }
 }
 
+// Where the player is and what the map looks at: 0x1000b00(map, placement*, bool, focus*, null), what the
+// HUD does every frame with the truck's placement (0x689e3e) and the job offer's map with its own points.
+// placement = {f32 x, y, z in the sector; i16 sector x, z; quaternion w, x, y, z} (as for the teleport);
+// it becomes the player's marker (+0x258 position, +0x268 rotation). focus (optional, 16 bytes, same
+// position format) is what the view centres on (+0x1b4), the placement itself when null. The call also
+// puts the scale of the current zoom level into effect (+0x1ac = +0x1e0): without it a new widget
+// shows the player at the world's origin and a far too close view until the wheel is turned.
+constexpr uintptr_t MAP_PLACE = 0x1000b00;
+constexpr unsigned char kMapPlaceSig[10] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10};
+inline bool SetMapPlacement(void* window, uint32_t id, double x, double y, double z, double heading_turns, const double* focus_xz) {
+  struct Position {
+    float x, y, z;
+    int16_t sx, sz;
+  };
+  struct Placement {
+    Position p;
+    float q[4]; // w, x, y, z
+  };
+  if (std::memcmp(At<const void*>(MAP_PLACE), kMapPlaceSig, sizeof kMapPlaceSig) != 0) return false;
+  const auto position = [](double wx, double wy, double wz) {
+    Position p{};
+    p.sx = static_cast<int16_t>(std::floor(wx / 512.0));
+    p.sz = static_cast<int16_t>(std::floor(wz / 512.0));
+    p.x = static_cast<float>(wx - p.sx * 512.0);
+    p.y = static_cast<float>(wy);
+    p.z = static_cast<float>(wz - p.sz * 512.0);
+    return p;
+  };
+  Placement at{position(x, y, z), {}};
+  const double half = heading_turns * 6.283185307179586 / 2; // rotation about +Y
+  at.q[0] = static_cast<float>(std::cos(half));
+  at.q[2] = static_cast<float>(std::sin(half));
+  Position focus = focus_xz ? position(focus_xz[0], y, focus_xz[1]) : at.p;
+  __try {
+    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    if (!map) return false;
+    At<void (*)(void*, void*, bool, void*, void*)>(MAP_PLACE)(map, &at, false, focus_xz ? &focus : nullptr, nullptr);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // DIAGNOSTICS for the map experiment: the raw bytes of a map widget, to compare the one of the game's
 // own map screen (which draws the GPS route) with the one inside our window (which does not).
 // The game's screen: window "world_map" -> ui::portal id 100000 -> its child window (+0x98) -> map id 100000.
