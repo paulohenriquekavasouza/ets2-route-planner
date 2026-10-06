@@ -605,8 +605,9 @@ inline int KeepMapIcons(void* window, uint32_t id) {
 // "Unable to override gps while on job"). The maps draw the route the GPS is on, so this is how a route
 // is previewed: waypoints = the companies, in order (the route starts at the truck).
 // Returns how many waypoints were set; 0 clears the GPS; -1 = refused or not possible.
-// A waypoint is a route_task_node_t (24 bytes; first dword 2 = none); `via` are waypoints the player put
-// on the map (MapClickWaypoint below), kept as the game made them: they go after the first stop.
+// A waypoint is a route_task_node_t (24 bytes; first dword 2 = none). `via`, when given, is the whole
+// route as the map widget holds it after the player changed it (MapClickWaypoint below: the stops with
+// the player's points among them), and goes to the GPS as it is instead of the stops.
 // [game+0x42f0] is the navigation's mode, nav+0x1c8: 0 nothing, 5 free waypoints, 1/6/7 a job. On a job
 // the waypoints at nav+0x1f8 (data +0x200, count +0x208) end with the job's own target, and the player's
 // points go before it with the mode kept: what the map does when the player adds one (0x1013bd3).
@@ -634,7 +635,7 @@ inline int SetGpsRoute(const uint64_t (*stops)[2], int count, const NavNode* via
     if (state < 0 || state > 7 || state == 1 || state == 6 || state == 7) return -1;
     alignas(16) uint8_t targets[(4 + kMaxVia) * 24 + 16] = {};
     int n = 0;
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count && !via_count; ++i) {
       uint64_t company_tok = stops[i][0], city_tok = stops[i][1];
       const uint8_t* company = At<uint8_t* (*)(uint64_t*, uint64_t*)>(FIND_COMPANY)(&company_tok, &city_tok);
       uint8_t* const item = Alive(company) ? Ptr(company, 0x10) : nullptr;
@@ -644,10 +645,10 @@ inline int SetGpsRoute(const uint64_t (*stops)[2], int count, const NavNode* via
       if (*reinterpret_cast<const int*>(one) == 2) continue; // no navigation point for that company
       std::memcpy(targets + n * 24, one, 24);
       ++n;
-      if (i == 0 && via_count) {
-        std::memcpy(targets + n * 24, via, via_count * 24);
-        n += via_count;
-      }
+    }
+    if (via_count) {
+      std::memcpy(targets, via, via_count * 24);
+      n = via_count;
     }
     if (count > 0 && n == 0) return -1;
     Array array{Base() + NAV_ARRAY_VTBL, n ? targets : nullptr, static_cast<uint64_t>(n), static_cast<uint64_t>(n)};
@@ -658,8 +659,40 @@ inline int SetGpsRoute(const uint64_t (*stops)[2], int count, const NavNode* via
   }
 }
 
-// The player's points on a running job: 1 = put before the job's target, 0 = not now (no job in the GPS,
-// or it holds more than the one target already), -1 = not possible.
+// The waypoint the GPS gets for a company (what SetGpsRoute sends for a stop), to tell the stops from the
+// player's points in the map's list.
+inline bool CompanyNode(uint64_t company_tok, uint64_t city_tok, NavNode* out) {
+  for (const Sig& s : kNavSigs)
+    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
+  __try {
+    uint8_t* const game = *At<uint8_t**>(ACTOR_OWNER);
+    const uint8_t* company = game ? At<uint8_t* (*)(uint64_t*, uint64_t*)>(FIND_COMPANY)(&company_tok, &city_tok) : nullptr;
+    uint8_t* const item = Alive(company) ? Ptr(company, 0x10) : nullptr;
+    if (!item) return false;
+    alignas(16) uint8_t one[32] = {};
+    At<void (*)(void*, void*, void*, uint64_t, bool)>(NAV_TARGET)(game, one, item, 0, false);
+    std::memcpy(out, one, sizeof *out);
+    return static_cast<uint32_t>(out->kind) != 2;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+// The navigation's mode and how many waypoints it holds (for the log).
+inline bool NavState(int* mode, uint64_t* count) {
+  __try {
+    const uint8_t* const game = *At<uint8_t**>(ACTOR_OWNER);
+    if (!game) return false;
+    *mode = *reinterpret_cast<const int*>(game + 0x4128 + 0x1c8);
+    *count = *reinterpret_cast<const uint64_t*>(game + 0x4128 + 0x208);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+// The player's points on a running job: 1 = put before the job's target, 0 = not now (no destination in
+// the GPS, or it holds more than the one target already), -1 = not possible. The modes are the ones in
+// which the map itself keeps the last target (0x1013b6e: 1-4, 6, 7).
 inline int ApplyJobWaypoints(const NavNode* via, int via_count) {
   struct Array {
     uintptr_t vtbl;
@@ -675,7 +708,7 @@ inline int ApplyJobWaypoints(const NavNode* via, int via_count) {
     uint8_t* const nav = game + 0x4128;
     const int mode = *reinterpret_cast<const int*>(nav + 0x1c8);
     const NavNode* const now = *reinterpret_cast<const NavNode* const*>(nav + 0x200);
-    if ((mode != 1 && mode != 6 && mode != 7) || *reinterpret_cast<const uint64_t*>(nav + 0x208) != 1 || !now) return 0;
+    if (mode < 1 || mode > 7 || mode == 5 || *reinterpret_cast<const uint64_t*>(nav + 0x208) != 1 || !now) return 0;
     alignas(16) NavNode nodes[kMaxVia + 1];
     std::memcpy(nodes, via, via_count * sizeof(NavNode));
     nodes[via_count] = now[0];
@@ -697,13 +730,17 @@ inline int ApplyJobWaypoints(const NavNode* via, int via_count) {
 //   else, if node is a place (kind != 2, !0x100b8a0(&node)) and there is room:
 //            [map+0xae8] = 0 (1 = a place to avoid); 0x10130e0(map, index, &node)   in at its place along the route
 // The screen's handler first asks vt[0x1b8] and 0x1012f30 (not while dragging: bits 0-1 of +0x8a4, nothing
-// picked up: [map+0xcf0] == -1); the same is checked here.
+// picked up: [map+0xcf0] == -1); the same is checked here. It also starts with 0x10127e0(map, x, y), the
+// pointer's place (what a mouse move does: finds what is under it); done here with the place the widget
+// last heard of, because without it most clicks found nothing (first test, 2026-10-06).
+// On attaching the navigation the widget takes the GPS's waypoints into its list: with our route in the
+// GPS the list is origin, destination, and what the player adds goes between them.
 // Returns 1 = added, 2 = removed, 0 = nothing there / no room, -1 = not possible.
-constexpr uintptr_t MAP_HIT = 0x10112a0, MAP_PICK = 0x1012c30, MAP_DROP = 0x1012eb0, MAP_ADD = 0x10130e0, MAP_NODE_BAD = 0x100b8a0, MAP_INSERT = 0x1016b40;
+constexpr uintptr_t MAP_HIT = 0x10112a0, MAP_PICK = 0x1012c30, MAP_DROP = 0x1012eb0, MAP_ADD = 0x10130e0, MAP_NODE_BAD = 0x100b8a0, MAP_MOVE = 0x10127e0;
 constexpr Sig kMapViaSigs[] = {
     {MAP_HIT, {0x48, 0x8b, 0xc4, 0x4c, 0x89, 0x48, 0x20, 0x48, 0x89, 0x50}},  {MAP_PICK, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
     {MAP_DROP, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x8b, 0x81, 0x38, 0x0d}}, {MAP_ADD, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20}},
-    {MAP_NODE_BAD, {0x48, 0x83, 0xec, 0x28, 0x4c, 0x8b, 0xc1, 0x48, 0x8b, 0x0d}}, {MAP_INSERT, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
+    {MAP_NODE_BAD, {0x48, 0x83, 0xec, 0x28, 0x4c, 0x8b, 0xc1, 0x48, 0x8b, 0x0d}}, {MAP_MOVE, {0x48, 0x8b, 0xc4, 0x56, 0x48, 0x81, 0xec, 0x10, 0x01, 0x00}},
 };
 inline bool MapViaKnown() {
   for (const Sig& s : kMapViaSigs)
@@ -716,6 +753,7 @@ inline int MapClickWaypoint(void* window, uint32_t id) {
     uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
     if (!map || !Ptr(map, 0xb8)) return -1;
     if ((*reinterpret_cast<const uint32_t*>(map + 0x8a4) & 3) || *reinterpret_cast<const int64_t*>(map + 0xcf0) != -1) return 0;
+    if (map[0xd4e]) At<void (*)(void*, float, float)>(MAP_MOVE)(map, *reinterpret_cast<const float*>(map + 0xd44), *reinterpret_cast<const float*>(map + 0xd48));
     uint64_t index = *reinterpret_cast<const uint64_t*>(map + 0xd18);
     if (index == ~0ull) index = *reinterpret_cast<const uint64_t*>(map + 0xd10);
     NavNode node{2, 0, 2, 0};
@@ -752,17 +790,33 @@ inline int MapWaypoints(void* window, uint32_t id, NavNode* out) {
     return -1;
   }
 }
-// Gives a new widget the waypoints of before (after AttachMapNavigation, which empties its list). The
-// navigation is not touched: SetGpsRoute has them already.
-inline bool FillMapWaypoints(void* window, uint32_t id, const NavNode* via, int via_count) {
-  if (!MapViaKnown() || via_count < 0 || via_count > kMaxVia) return false;
+// The names on the map (cities, countries) are markup the widget writes itself (0x100ca87):
+// "<font face=/font/%s.font xscale=%g yscale=%g>" with the font's name in the string at +0x230 (data
+// +0x238, length +0x240) and the size times the float at +0x250 (1.0). A new widget has "map", a font
+// that does not exist (hence the plain fallback letters); the game's screens give theirs "normal_o", the
+// outlined one (0x10a71b6, 0x105f3ad), with the string's assign 0xf4a40(string, 0, {text, 0, length}*).
+// The same here, and the size on top.
+constexpr uintptr_t STRING_ASSIGN = 0xf4a40, EMPTY_TEXT = 0x1df110e;
+constexpr unsigned char kStringAssignSig[10] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10};
+inline bool SetMapNames(void* window, uint32_t id, const char* font, float scale) {
+  struct Piece {
+    const char* text;
+    uint64_t zero, length;
+  };
+  if (std::memcmp(At<const void*>(STRING_ASSIGN), kStringAssignSig, sizeof kStringAssignSig) != 0) return false;
   __try {
     uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
-    if (!map || *reinterpret_cast<const uint64_t*>(map + 0x8d0) != 0) return false;
-    for (int i = 0; i < via_count; ++i) {
-      NavNode node = via[i];
-      At<void* (*)(void*, uint64_t, NavNode*)>(MAP_INSERT)(map + 0x8c0, static_cast<uint64_t>(i), &node);
+    if (!map) return false;
+    uint8_t* const name = map + 0x230;
+    char* const data = *reinterpret_cast<char**>(name + 8);
+    if (!data) return false;
+    if (data != At<char*>(EMPTY_TEXT)) {
+      data[0] = 0;
+      *reinterpret_cast<uint32_t*>(name + 0x10) = 0;
     }
+    Piece piece{font, 0, std::strlen(font)};
+    At<void (*)(void*, uint32_t, Piece*)>(STRING_ASSIGN)(name, 0, &piece);
+    *reinterpret_cast<float*>(map + 0x250) = scale;
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;

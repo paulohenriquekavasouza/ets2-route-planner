@@ -648,3 +648,18 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   - **Fonte dos nomes das cidades:** não feito. Não há configuração para isso (`/def/map_data.sii` só tem cores e escalas; o script do
     widget só tem `show_country_names`); tamanho e cor saem do código de desenho (`0x100d3xx`, cor 0xff00aeff, escala por `vt[0x1b0]`).
     Mexer nisso seria alterar código do jogo em memória.
+- **Rumo à v3.3, 2ª rodada (2026-10-06), depois do 1º teste do usuário.** NÃO testado em jogo.
+  - **O que o log mostrou:** 3 cliques "nada ali" e 1 adicionado, e a lista do widget passou a ter 3 nós: ao receber a navegação o widget
+    IMPORTA os alvos do GPS para a lista dele (`+0x8c0` = origem, destino), e o ponto novo entra entre eles. Por isso `FillMapWaypoints`
+    falhava ("NÃO devolvidos": lista não vazia) e era desnecessário; saiu. `g_via` agora é a lista inteira do widget (origem, pontos,
+    destino) e vai ao GPS como está; `OwnVia()` tira as duas empresas (`game::CompanyNode`) para contar e para o serviço.
+  - **Clique:** agora o esquerdo, como no mapa do jogo: soltar o botão sem ter arrastado (≤ 4 px), com o cursor sobre o mapa (bit 24 de
+    `+0x60`) e fora de botão. Antes de procurar o que há sob o cursor chama `0x10127e0(mapa, x, y)` com a posição que o widget já tinha
+    (`+0xd44/+0xd48`, válida se `+0xd4e`), como a tela do jogo faz: é o que atualiza o item sob o cursor. Clicar na origem/destino é desfeito.
+  - **Serviço:** a rota não foi para o GPS e o log não dizia por quê. `RunJobVia` agora aplica quando há serviço, reboque engatado, o
+    caminhão a menos de 2 km de onde o serviço começou e o GPS com um alvo só em modo de destino (1-4, 6, 7), quantas vezes for preciso
+    (o jogo refaz o GPS ao engatar), e registra o estado a cada ~5 s ("rota personalizada: esperando (… modo M com N alvo(s), reboques …)").
+  - **Nomes das cidades:** são markup que o widget escreve (`0x100ca87`: `<font face=/font/%s.font xscale=%g yscale=%g>`), com o nome da
+    fonte na string em `+0x230` e a escala em `+0x250` (1.0). Widget novo tem "map" (fonte inexistente → letra de reserva, sem contorno);
+    as telas do jogo põem "normal_o" (a contornada: efeito `ui.font.msdf.outline`) com `0xf4a40(string, 0, {texto, 0, tamanho}*)`.
+    `game::SetMapNames` faz o mesmo e põe a escala em 1,3 (`kMapNameScale`). Fontes do jogo extraídas em `C:\Users\Paulo\ets2-font`.
