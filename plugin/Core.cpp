@@ -873,7 +873,8 @@ std::string SiiString(const std::string& s) {
 
 // The game keeps a script it has loaded: the same path (or the same unit names) again shows the old
 // content. So every opening gets its own file and names; the previous file is deleted.
-int g_native_serial = 0;
+// The number must also be new after a hot reload of this DLL (the game's cache outlives it): it starts at the clock.
+int g_native_serial = static_cast<int>(GetTickCount64() / 1000 % 1000000) * 100;
 std::string NativeScriptName() { return "planner_" + std::to_string(g_native_serial) + ".sii"; }
 std::string NativeScriptDir() {
   const char* home = std::getenv("USERPROFILE"); // ponytail: Documents in its default place; ask the shell if someone moved theirs
