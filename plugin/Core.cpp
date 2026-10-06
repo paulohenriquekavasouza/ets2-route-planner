@@ -840,7 +840,37 @@ void RunPending() {
 // The key comes from the host (SPF swallows Home before Windows' key state sees it: reading it directly found nothing).
 void* g_native_window = nullptr;
 std::atomic<bool> g_native_toggle{false};
+// While the window is open: log which bytes of the test button (id 200) change, to learn where the game
+// keeps "pointer over it" and "pressed" (a window of ours has no handler class to be told about clicks).
+void WatchNativeButton() {
+  static uint8_t before[0x240];
+  static bool have = false;
+  static int logged = 0;
+  if (!g_native_window) {
+    have = false, logged = 0;
+    return;
+  }
+  uint8_t now[sizeof before];
+  if (!game::SnapshotWidget(g_native_window, 200, now, sizeof now)) return;
+  if (have && logged < 60 && std::memcmp(before, now, sizeof now) != 0) {
+    std::string line = "botão de teste mudou:";
+    char item[48];
+    int shown = 0;
+    for (size_t i = 0; i < sizeof now && shown < 10; ++i)
+      if (before[i] != now[i]) {
+        std::snprintf(item, sizeof item, " +0x%zx %02x>%02x", i, before[i], now[i]);
+        line += item;
+        ++shown;
+      }
+    Log(line);
+    ++logged;
+  }
+  std::memcpy(before, now, sizeof now);
+  have = true;
+}
+
 void NativeExperiment() {
+  WatchNativeButton();
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
     Log(std::string("janela do jogo (experimento): ") + (game::CloseGameWindow(&g_native_window) ? "fechada" : "falha ao fechar"));

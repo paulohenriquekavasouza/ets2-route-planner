@@ -438,3 +438,13 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - **Plugin (etapa 1):** `game::OpenGameWindow/CloseGameWindow`; Home (lido direto do Windows, sem mexer na hospedeira) abre/fecha uma
   janela estática: fundo, título, texto e um botão sem ação. NÃO testado em jogo.
 - Próximas etapas se a 1 funcionar: achar widgets por id, trocar textos, detectar clique dos botões (sem handler C++), listas.
+- **Etapa 1 confirmada em jogo (2026-10-05):** Home abre e fecha a janela nativa (log "aberta"/"fechada"); o cursor NÃO aparece.
+  A tecla precisa vir do atalho do SPF (ele engole a Home antes do GetAsyncKeyState).
+- RE: janela +0xd8 = flags passadas na criação (0x100 opções, 0x400 = janelas passivas do HUD) | byte de ordem (0x7d/0x80);
+  +0xa0 = nome; lista de janelas do gerente em mgr+0xd8 (nó+0x10 = janela); mgr+0x308 = janela `ui_gamepad_focus`, mgr+0x388 = contador
+  de janelas sem 0x400; pilha de ponteiros em mgr+0x238. `0x37dab0(janela, char** "tipo_hdl", 0)` acha o handler pelo tipo.
+  **Widgets:** filhos em +0x70 (contagem +0x78), id em +0x14, contêiner = bit 7 de +0x60; busca por id = 0x385e20(contêiner, id)
+  (reimplementada em `game::FindWidget`). Handlers recebem o widget clicado num virtual (ex. 0x1133440 compara [widget+0x14]).
+- Ideia para conteúdo dinâmico sem RE do "set text": reescrever o .sii e recriar a janela.
+- Diagnóstico instalado: com a janela aberta, o log lista os bytes do botão (id 200) que mudam (para achar "sobre"/"pressionado").
+- Em aberto: como ligar o ponteiro do mouse (no jogo, o botão direito alterna o ponteiro do conselheiro de rota).

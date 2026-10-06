@@ -422,6 +422,33 @@ inline int OpenGameWindow(void** slot, const char* name, const char* path) {
     return 9;
   }
 }
+// A widget of a game window by its `id:` in the script (what the game's 0x385e20 does): children are
+// the array at +0x70 (count +0x78), the id is the u32 at +0x14, containers have bit 7 of +0x60.
+inline uint8_t* FindWidget(uint8_t* w, uint32_t id, int depth = 0) {
+  if (!w || depth > 8) return nullptr;
+  uint8_t** kids = *reinterpret_cast<uint8_t***>(w + 0x70);
+  const uint64_t n = *reinterpret_cast<uint64_t*>(w + 0x78);
+  for (uint64_t i = 0; kids && i < n && i < 512; ++i) {
+    uint8_t* k = kids[i];
+    if (!k) continue;
+    if (*reinterpret_cast<uint32_t*>(k + 0x14) == id) return k;
+    if (*reinterpret_cast<uint32_t*>(k + 0x60) & 0x80)
+      if (uint8_t* found = FindWidget(k, id, depth + 1)) return found;
+  }
+  return nullptr;
+}
+// Diagnostics for the experiment: copies `size` bytes of the widget `id` of `window`. False if not there.
+inline bool SnapshotWidget(void* window, uint32_t id, uint8_t* out, size_t size) {
+  __try {
+    uint8_t* const w = FindWidget(static_cast<uint8_t*>(window), id);
+    if (!w) return false;
+    std::memcpy(out, w, size);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 inline bool CloseGameWindow(void** slot) {
   __try {
     void* const mgr = *At<void**>(UI_MANAGER);
