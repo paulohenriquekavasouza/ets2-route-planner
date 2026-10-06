@@ -509,7 +509,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Tela nativa: sem o texto "Esc fecha" (o Esc continua fechando), sem o rótulo "trocar" nos botões de origem/destino, "Outras empresas" virou "Mudar empresas (N)".
 - "Limpar planejamento" à direita da linha de ações (espelho de "Salvar como favorita"): aparece quando há país/cidade/carga escolhidos ou uma favorita em edição; zera origem, destino, carga, "Qualquer carga", índice e a mensagem de status.
 
-## v3.0.2 (master, 2026-10-05, ainda sem tag)
+## v3.1.0 (master, 2026-10-05) — aprovada pelo usuário (trabalhada como 3.0.2)
 - **Piscada a cada clique:** a tela era fechada e só então a nova era criada. Agora a nova sobe primeiro e a antiga é fechada 2 quadros
   depois (`g_native_old`). Cada janela tem nome próprio (`rpl<N>`): `0x38c080` derruba qualquer outra janela com o MESMO nome ao mostrar.
 - **Filtro digitável na página de cargas:** caixa desenhada com widgets do jogo (fundo escuro + texto + "_"), teclas vindas de um gancho
@@ -517,3 +517,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   primeiro plano). Comparação sem acento e sem maiúsculas (`Fold`). Um input nativo de verdade (`ui::inputline`) precisaria de handler.
 - **Ordenar por:** Nome / Peso (dourado o ativo); clicar no ativo inverte (A–Z ↔ Z–A, mais pesada ↔ mais leve primeiro).
 - NÃO testado em jogo.
+- A janela antiga passou a ser fechada 3 quadros depois (pedido do usuário após testar com 2). Salva como v3.1.
