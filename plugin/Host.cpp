@@ -106,6 +106,11 @@ void OnPlannerKey() {
   if (g_ex.Key) g_ex.Key(CORE_KEY_PLANNER);
 }
 
+void OnNativeKey() {
+  std::lock_guard lock(g_guest_mutex);
+  if (g_ex.Key) g_ex.Key(CORE_KEY_NATIVE);
+}
+
 void DrawPlanner(SPF_UI_API* ui, void*) {
   std::lock_guard lock(g_guest_mutex);
   if (g_ex.DrawPlanner) g_ex.DrawPlanner(ui);
@@ -157,6 +162,10 @@ void BuildManifest(SPF_Manifest_Builder_Handle* h, const SPF_Manifest_Builder_AP
   api->Policy_AddRequiredHook(h, "GameConsole"); // g_set_time / g_set_weather before starting a job
   api->Defaults_AddKeybind(h, "Routes", "toggle", "keyboard", "KEY_F8", "always");
   api->Meta_AddKeybind(h, "Routes", "toggle", "Abrir planejador", "Abre/fecha a janela de rotas.");
+  // Home = the game-UI experiment. The action is called "escort" because that is the name Paulo's settings.json
+  // already holds for Home (from the escort branch) and SPF does not merge new actions into an existing file.
+  api->Defaults_AddKeybind(h, "Routes", "escort", "keyboard", "KEY_HOME", "always");
+  api->Meta_AddKeybind(h, "Routes", "escort", "Experimento: janela do jogo", "Abre/fecha a janela de teste feita com a interface do próprio jogo.");
   // name, visible, interactive, x, y, w, h, collapsed, autoscroll
   api->Defaults_AddWindow(h, "Planejador", false, true, 560, 120, 520, 760, false, false);
   api->Meta_AddWindow(h, "Planejador", "Planejador de rotas", "Origem, destino, carga e o serviço atual.");
@@ -170,7 +179,10 @@ void OnActivated(const SPF_Core_API* core) {
   g_core = core;
   g_dir = PluginDir();
   if (core->keybinds)
-    if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) core->keybinds->Kbind_Register(keys, "Routes.toggle", OnPlannerKey);
+    if (SPF_KeyBinds_Handle* keys = core->keybinds->Kbind_GetContext(PLUGIN_NAME)) {
+      core->keybinds->Kbind_Register(keys, "Routes.toggle", OnPlannerKey);
+      core->keybinds->Kbind_Register(keys, "Routes.escort", OnNativeKey);
+    }
   std::lock_guard lock(g_guest_mutex);
   ReloadGuest();
 }

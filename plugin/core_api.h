@@ -19,7 +19,7 @@ struct CoreApi {
   void (*SetMouseBlocked)(bool blocked);
 };
 
-enum CoreKey { CORE_KEY_PLANNER = 0 };
+enum CoreKey { CORE_KEY_PLANNER = 0, CORE_KEY_NATIVE = 1 };
 
 struct CoreExports {
   void (*Update)();

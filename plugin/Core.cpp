@@ -837,16 +837,11 @@ void RunPending() {
 
 // EXPERIMENT (Home): the planner as a window of the game's own UI (game::OpenGameWindow). For now it only
 // shows a script of ours; F8 stays the real planner.
-// ponytail: the key is read straight from Windows, so the host and SPF's settings.json stay untouched.
+// The key comes from the host (SPF swallows Home before Windows' key state sees it: reading it directly found nothing).
 void* g_native_window = nullptr;
+std::atomic<bool> g_native_toggle{false};
 void NativeExperiment() {
-  static bool was_down = false;
-  DWORD pid = 0;
-  GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-  const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
-  const bool pressed = down && !was_down;
-  was_down = down;
-  if (!pressed) return;
+  if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
     Log(std::string("janela do jogo (experimento): ") + (game::CloseGameWindow(&g_native_window) ? "fechada" : "falha ao fechar"));
     return;
@@ -857,6 +852,7 @@ void NativeExperiment() {
 
 void Key(int key) {
   if (key == CORE_KEY_PLANNER) g_toggle = true;
+  else if (key == CORE_KEY_NATIVE) g_native_toggle = true;
 }
 
 void Update() {
