@@ -1020,7 +1020,7 @@ const char* NativeCargoOptions() {
     g_cargo_pending = g_supported && !g_options.empty();
   }
   if (g_cargo_pending) FilterUnknownCargo(); // asks the game which cargo it knows
-  if (g_options.empty()) return g_any_cargo ? "Uma das cidades não tem empresas" : "Nenhuma carga liga essas cidades: ligue \"Qualquer carga\"";
+  if (g_options.empty()) return g_any_cargo ? "Uma das cidades não tem empresas" : "Nenhuma carga liga essas cidades (marque \"Qualquer carga\")";
   return nullptr;
 }
 
@@ -1141,7 +1141,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
     int same = 0;
     for (const auto& other : g_options) same += other.cargo == o.cargo;
     if (same > 1)
-      ui.TextButton("Outras empresas (" + std::to_string(same) + ")", kX2 + kNPad, bottom + 126, bw, [cargo = o.cargo] {
+      ui.TextButton("Outras empresas (" + std::to_string(same) + ")", kX2 + kNPad, bottom + 88, bw, [cargo = o.cargo] {
         for (int n = 1; n <= static_cast<int>(g_options.size()); ++n) { // the next pair of companies carrying the same cargo
           const int i = (g_selected + n) % static_cast<int>(g_options.size());
           if (g_options[i].cargo == cargo) {
@@ -1154,8 +1154,8 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
     ui.Draw("<align hstyle=center vstyle=center>" + std::string("<img src=/material/ui/cargo_logo/trailer_generic.mat width=56 height=56 color=40FFFFFF>") + "</align>", kX2, top - 150, w, 60);
     ui.Title(note ? note : "Nenhuma carga escolhida", kX2, top - 226, w, 28, kNFont, kNDim);
   }
-  if (!note) ui.TextButton(CargoPicked() ? "Trocar a carga" : "Escolher a carga", kX2 + kNPad, bottom + 88, bw, [] { NativeGoTo(NativePage::Cargo); });
-  ui.Toggle("Qualquer carga", kX2 + kNPad, bottom + 50, bw, &g_any_cargo);
+  // also with nothing to list: "Qualquer carga" lives on the cargo page
+  if (!g_src.city.empty() && !g_dst.city.empty()) ui.TextButton(CargoPicked() ? "Trocar a carga" : "Escolher a carga", kX2 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Cargo); });
   // ---- current job ----
   ui.Card("SERVIÇO ATUAL", kX3, top, w, h);
   if (!jd.on_job) {
