@@ -539,3 +539,11 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   nasce 8 no construtor (0xffc705), um além do último. As telas do jogo chamam antes `0x10005c0(mapa, nível)` (virtual; grava +0x1e8, pega
   a escala em +0x1e0 da tabela de floats `…+0x10` e chama 0x1000750). Plugin: `game::SetMapZoom` logo depois de abrir a janela (mesmo
   quadro, antes do desenho), nível inicial 4, e botões "Zoom −/+" que mudam o mapa aberto sem recriar a janela. NÃO testado em jogo.
+- **Etapa 1 confirmada em jogo (2026-10-06):** com o zoom definido, `ui_world_map` e `ui_job_map` aparecem dentro da nossa janela e a
+  RODA DO MOUSE dá zoom neles nativamente; só desenham depois que o zoom muda uma vez. `ui_map` (o do conselheiro, /ui/gps.sii) tem outros
+  atributos ("has no attribute named 'show_country_names'") → o script não carrega; o jogo só registra o erro, não cai.
+- **Etapa 2 (plugin):** os mapas desenham a rota em que o GPS do jogo está → ao abrir a página do mapa o plugin manda a rota do planejador
+  para o GPS (`game::SetGpsRoute`: alvos de 24 bytes de 0x7b47b0 para a empresa de origem e a de destino, trocados com 0x4fad00; código vindo
+  da branch `gps-distancia`, nunca testado em jogo) e limpa ao sair da página/fechar. Recusado pelo jogo durante um serviço
+  ([game+0x42f0] = 1, 6, 7). A rota começa no caminhão. Zoom inicial 1 e um "empurrão" (muda um nível e volta) 2–3 quadros após abrir,
+  para o mapa desenhar sozinho. NÃO testado em jogo; não sei se o GPS calcula com o jogo pausado.

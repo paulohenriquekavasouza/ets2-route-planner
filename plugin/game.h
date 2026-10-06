@@ -548,6 +548,51 @@ inline int SetMapZoom(void* window, uint32_t id, int level) {
   }
 }
 
+// The game's GPS. What `cheat company_portal` does after teleporting (0x5c9fe9):
+//   0x7b47b0(game, target*, company map item, 0, 0)   builds a 24-byte navigation target (first dword 2 = none)
+//   0x4fad00(game+0x4128, 5, array{vtbl, data, size, capacity}*)   replaces the GPS waypoints (copies the array)
+// with game = [exe+0x36ae6d8]. The game only allows it while [game+0x42f0] is 0, 2, 3, 4 or 5 (1, 6, 7 =
+// "Unable to override gps while on job"). The maps draw the route the GPS is on, so this is how a route
+// is previewed: waypoints = the companies, in order (the route starts at the truck).
+// Returns how many waypoints were set; 0 clears the GPS; -1 = refused or not possible.
+constexpr uintptr_t NAV_TARGET = 0x7b47b0, NAV_SET = 0x4fad00, NAV_ARRAY_VTBL = 0x21fafa8;
+constexpr Sig kNavSigs[] = {{NAV_TARGET, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}}, {NAV_SET, {0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18}}};
+inline int SetGpsRoute(const uint64_t (*stops)[2], int count) { // stops[i] = {company token, city token}
+  struct Array {
+    uintptr_t vtbl;
+    void* data;
+    uint64_t size, capacity;
+  };
+  for (const Sig& s : kNavSigs)
+    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return -1;
+  if (count < 0 || count > 4) return -1;
+  __try {
+    uint8_t* const game = *At<uint8_t**>(ACTOR_OWNER);
+    if (!game) return -1;
+    const int state = *reinterpret_cast<const int*>(game + 0x42f0);
+    if (state < 0 || state > 7 || state == 1 || state == 6 || state == 7) return -1;
+    alignas(16) uint8_t targets[4 * 24 + 16] = {};
+    int n = 0;
+    for (int i = 0; i < count; ++i) {
+      uint64_t company_tok = stops[i][0], city_tok = stops[i][1];
+      const uint8_t* company = At<uint8_t* (*)(uint64_t*, uint64_t*)>(FIND_COMPANY)(&company_tok, &city_tok);
+      uint8_t* const item = Alive(company) ? Ptr(company, 0x10) : nullptr;
+      if (!item) continue;
+      alignas(16) uint8_t one[32] = {};
+      At<void (*)(void*, void*, void*, uint64_t, bool)>(NAV_TARGET)(game, one, item, 0, false);
+      if (*reinterpret_cast<const int*>(one) == 2) continue; // no navigation point for that company
+      std::memcpy(targets + n * 24, one, 24);
+      ++n;
+    }
+    if (count > 0 && n == 0) return -1;
+    Array array{Base() + NAV_ARRAY_VTBL, n ? targets : nullptr, static_cast<uint64_t>(n), static_cast<uint64_t>(n)};
+    At<void (*)(void*, int, void*)>(NAV_SET)(game + 0x4128, 5, &array);
+    return n;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+}
+
 inline bool CloseGameWindow(void** slot) {
   __try {
     void* const mgr = *At<void**>(UI_MANAGER);
