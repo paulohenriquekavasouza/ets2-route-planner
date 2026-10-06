@@ -544,11 +544,21 @@ inline uint32_t WidgetFlags(void* window, uint32_t id) {
 // The levels are the zoom_uplift[] of /def/map_data.sii: 0-1 the 3D map, 2-3 the minimap, and for the
 // world map 4 (city detail), 5 (closest), 6 (middle), 7 (whole world): higher = farther. Below 4 a world
 // map is so close that it looks empty.
+// What a map draws (icons of companies, services, road numbers, city names...) is the set of flags at
+// +0x888. A new widget has all of them on (0xFFFFFFFF: every icon of Europe at once); the game keeps one
+// set per zoom level in the table at [[exe+0x36ae6d8]+0x98]+0x178 (read live: level 6 = 0x685407, level
+// 7 = 0x481402) and applies it with 0x10017d0(map, flags). 0x10005c0 does not do that, so it is done
+// here; `rebuild` then has the map collect its content again with 0xffee60(map, 3), as the game's
+// handlers do after changing the flags (not needed on a widget that is still to be set up).
 // Returns the level set (clamped to the table), or -1 if the widget or the function is not there.
-constexpr uintptr_t MAP_SET_ZOOM = 0x10005c0;
+constexpr uintptr_t MAP_SET_ZOOM = 0x10005c0, MAP_SET_FLAGS = 0x10017d0, MAP_REBUILD = 0xffee60;
 constexpr unsigned char kMapZoomSig[10] = {0x48, 0x83, 0xec, 0x48, 0x4c, 0x8b, 0xc9, 0x3b, 0x91, 0xe8};
-inline int SetMapZoom(void* window, uint32_t id, int level) {
-  if (std::memcmp(At<const void*>(MAP_SET_ZOOM), kMapZoomSig, sizeof kMapZoomSig) != 0) return -1;
+constexpr unsigned char kMapFlagsSig[10] = {0x48, 0x8b, 0x05, 0x71, 0xcf, 0x6a, 0x02, 0x89, 0x91, 0x88};
+constexpr unsigned char kMapRebuildSig[10] = {0x48, 0x89, 0x5c, 0x24, 0x18, 0x55, 0x56, 0x57, 0x41, 0x54};
+inline int SetMapZoom(void* window, uint32_t id, int level, bool rebuild = false) {
+  if (std::memcmp(At<const void*>(MAP_SET_ZOOM), kMapZoomSig, sizeof kMapZoomSig) != 0 || std::memcmp(At<const void*>(MAP_SET_FLAGS), kMapFlagsSig, sizeof kMapFlagsSig) != 0 ||
+      std::memcmp(At<const void*>(MAP_REBUILD), kMapRebuildSig, sizeof kMapRebuildSig) != 0)
+    return -1;
   __try {
     uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
     uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
@@ -558,6 +568,12 @@ inline int SetMapZoom(void* window, uint32_t id, int level) {
     if (levels < 1 || levels > 64) return -1;
     level = level < 0 ? 0 : level >= levels ? levels - 1 : level;
     At<void (*)(void*, int)>(MAP_SET_ZOOM)(map, level);
+    const uint32_t* const presets = reinterpret_cast<const uint32_t*>(Ptr(data + 0x178, 8));
+    const uint64_t preset_count = *reinterpret_cast<const uint64_t*>(data + 0x178 + 0x10);
+    if (presets && static_cast<uint64_t>(level) < preset_count) {
+      At<void (*)(void*, uint32_t)>(MAP_SET_FLAGS)(map, presets[level]);
+      if (rebuild) At<void (*)(void*, int)>(MAP_REBUILD)(map, 3);
+    }
     return level;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return -1;

@@ -1565,7 +1565,7 @@ void NativeMapPage(NativeUi& ui) {
   for (const int step : {-1, 1})
     ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
       // on the map that is on screen; "+" is closer = a lower level, never below the world map's closest
-      const int now = game::SetMapZoom(g_native_window, 100000, std::max(4, g_native_map_zoom - step));
+      const int now = game::SetMapZoom(g_native_window, 100000, std::max(4, g_native_map_zoom - step), true);
       if (now >= 0) g_native_map_zoom = now;
       Log("mapa: zoom " + std::to_string(now));
       g_native_keep = true;

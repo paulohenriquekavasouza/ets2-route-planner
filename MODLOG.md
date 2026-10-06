@@ -611,3 +611,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   em vigor (`+0x1ac = +0x1e0`). Placement = o mesmo formato do teleporte. Plugin: `game::SetMapPlacement` com a posição da telemetria e o
   foco no meio entre as duas empresas da rota; zoom inicial escolhido pelo tamanho da rota (5/6/7, limites estimados).
   Esc: capturado pelo gancho de teclado enquanto a tela está aberta (`g_esc`), sem chegar ao jogo. NÃO testado em jogo.
+- **Posição do jogador certa (confirmado em jogo).** Novo defeito: o mapa abre com TODOS os ícones da Europa (flags `+0x888` nascem
+  0xFFFFFFFF; só o zoom pela roda aplica o conjunto do nível). `game::SetMapZoom` agora também aplica o conjunto do nível
+  (`0x10017d0(mapa, tabela[nível])`, tabela em `[[exe+0x36ae6d8]+0x98]+0x178`) e, nos botões de zoom, reconstrói o conteúdo
+  (`0xffee60(mapa, 3)`). Assim os ícones seguem a regra do próprio jogo: aparecem conforme o nível de zoom. NÃO testado em jogo.
