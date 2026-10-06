@@ -673,3 +673,6 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   é só origem|destino, e `NativeGpsPreview` recompõe `g_via` com as empresas novas em volta dos pontos do jogador; (2) `RunJobVia`
   esperava o reboque engatado ("GPS modo 1 com 1 alvo(s), reboques 2 solto") e o usuário olha o GPS logo ao iniciar: agora aplica de
   imediato (3 s depois do início, perto do ponto de partida, GPS com um alvo só) e de novo se o jogo refizer o GPS. NÃO testado em jogo.
+- **v3.3 (2026-10-06): aprovada pelo usuário ("deu boa!").** Rota personalizada no mapa (clique numa estrada), levada ao GPS do
+  serviço ao iniciar; nomes das cidades com a fonte contornada do jogo; sem o crash da roda. Último ajuste antes de salvar: os pontos
+  entram no GPS ~1 s depois de iniciar (era 3 s; verificação a cada 10 quadros), não testado em jogo.

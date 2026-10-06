@@ -1747,7 +1747,7 @@ void RunJobVia() {
     started = false, told = 0;
     return;
   }
-  if (++tick % 30 != 0 || !g_tel || GetTickCount64() - g_job_via_since < 3000) return; // the teleport first
+  if (++tick % 10 != 0 || !g_tel || GetTickCount64() - g_job_via_since < 1000) return; // the teleport first (10 frames after the start)
   SPF_JobData jd{};
   g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
   if (!jd.on_job) {
@@ -1767,7 +1767,7 @@ void RunJobVia() {
   uint64_t targets = 0;
   game::NavState(&mode, &targets);
   const int set = near_start ? game::ApplyJobWaypoints(g_job_via.data(), static_cast<int>(g_job_via.size())) : 0;
-  if (set != 0 || told++ % 10 == 0)
+  if (set != 0 || told++ % 30 == 0)
     Log("rota personalizada: " + std::string(set == 1 ? "pontos postos no GPS do serviço" : set < 0 ? "NÃO consegui pôr os pontos no GPS" : "esperando") + " (" + std::to_string(g_job_via.size()) +
         " ponto(s), GPS modo " + std::to_string(mode) + " com " + std::to_string(targets) + " alvo(s), reboques " + std::to_string(count) + (hitched ? " engatado" : " solto") +
         (near_start ? "" : ", longe do início") + ")");
