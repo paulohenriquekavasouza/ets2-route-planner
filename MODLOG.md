@@ -496,3 +496,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   opções viraram a caixa de marcação do jogo (`/material/ui/button/checkbox_1..4.mat`: desligada, desligada+ponteiro, ligada, ligada+ponteiro)
   com o rótulo ao lado; roda do mouse vira a página das listas (`UI_GetMouseWheel` do SPF, lido no Update: não confirmado que chega com a UI
   do SPF fechada); `SiiString` troca →, …, · e € (não existem nas fontes do jogo → "?") e remove < > (são marcação). NÃO testado em jogo.
+- Roda do mouse: `UI_GetMouseWheel` do SPF NÃO chega com a UI dele fechada (teste do usuário). Trocado por um gancho `WH_MOUSE_LL` numa thread própria com fila de mensagens, ligado só enquanto a tela nativa está aberta (`WheelStart/WheelStop`; o Shutdown sempre encerra a thread). NÃO testado em jogo.

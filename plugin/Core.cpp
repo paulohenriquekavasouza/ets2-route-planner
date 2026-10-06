@@ -20,6 +20,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "game.h"
 #include "routes.h"
@@ -1382,6 +1383,43 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
   NativePager(ui, pages);
 }
 
+// ---- the mouse wheel ----
+// Neither the game's UI (no handler class) nor SPF's ImGui (its wheel does not arrive while SPF's own
+// windows are closed) tells us about the wheel, so while the screen is open a low-level mouse hook
+// counts the notches. Such a hook is called on the thread that installed it and needs that thread to
+// pump messages, hence a thread of ours: it must be gone before this DLL is unloaded (WheelStop).
+std::atomic<int> g_wheel{0};       // notches not yet used: up > 0
+std::atomic<DWORD> g_wheel_tid{0}; // the hook thread, once it runs
+std::thread g_wheel_thread;
+
+LRESULT CALLBACK WheelProc(int code, WPARAM what, LPARAM data) {
+  if (code == HC_ACTION && what == WM_MOUSEWHEEL)
+    g_wheel += static_cast<short>(HIWORD(reinterpret_cast<const MSLLHOOKSTRUCT*>(data)->mouseData)) > 0 ? 1 : -1;
+  return CallNextHookEx(nullptr, code, what, data);
+}
+void WheelStart() {
+  if (g_wheel_thread.joinable()) return;
+  g_wheel = 0;
+  g_wheel_tid = 0;
+  g_wheel_thread = std::thread([] {
+    MSG msg;
+    PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE); // makes this thread's message queue, so WM_QUIT can be posted to it
+    HMODULE self = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&WheelProc), &self);
+    const HHOOK hook = SetWindowsHookExW(WH_MOUSE_LL, WheelProc, self, 0);
+    g_wheel_tid = GetCurrentThreadId();
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    }
+    if (hook) UnhookWindowsHookEx(hook);
+  });
+}
+void WheelStop() {
+  if (!g_wheel_thread.joinable()) return;
+  while (!g_wheel_tid) Sleep(1); // it starts within a millisecond or two
+  PostThreadMessageW(g_wheel_tid, WM_QUIT, 0, 0);
+  g_wheel_thread.join();
+}
+
 // Writes the script of the current page. False if the file could not be written.
 bool WriteNativeScript() {
   DeleteFileA(NativeScriptPath().c_str());
@@ -1442,6 +1480,7 @@ void CloseNative() {
   g_native_paused = false;
   g_native_buttons.clear();
   DeleteFileA(NativeScriptPath().c_str());
+  WheelStop();
 }
 
 void NativeExperiment() {
@@ -1453,9 +1492,8 @@ void NativeExperiment() {
     const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, esc = ours && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     const bool released = was_down && !down, esc_pressed = esc && !esc_was_down;
     was_down = down, esc_was_down = esc;
-    // the wheel, as SPF's ImGui sees it (a notch lasts one frame there): down = next page
-    const float wheel = g_native_pages > 1 ? g_core->ui->UI_GetMouseWheel() : 0.0f;
-    const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, g_native_pages - 1);
+    const int wheel = ours ? g_wheel.exchange(0) : (g_wheel = 0, 0); // down = next page
+    const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, std::max(g_native_pages, 1) - 1);
     if (esc_pressed) {
       CloseNative();
     } else if (turned != g_native_list_page) {
@@ -1482,8 +1520,12 @@ void NativeExperiment() {
   g_native_paused = game::PauseForUi(true);
   if (!g_native_paused) Log("janela do jogo: NÃO consegui pausar o jogo (sem cursor)");
   if (g_native_page != NativePage::Favorites) NativeGoTo(NativePage::Planner);
-  if (!ShowNative()) CloseNative();
-  else Log("janela do jogo: aberta");
+  if (!ShowNative()) {
+    CloseNative();
+  } else {
+    WheelStart();
+    Log("janela do jogo: aberta");
+  }
 }
 
 void Key(int key) {
@@ -1532,6 +1574,7 @@ void DrawPlanner(SPF_UI_API* ui) { Draw(ui, nullptr); }
 // The DLL is going away: give the mouse back. Nothing here calls into the game.
 void Shutdown(bool game_calls_ok) {
   std::lock_guard lock(g_mu);
+  WheelStop(); // always: its thread runs code of this DLL
   if (game_calls_ok && g_native_window) CloseNative(); // on a framework unload it stays open (and paused): no game calls there
   if (g_core && g_core->ui && g_mouse_taken) {
     g_api.SetMouseBlocked(false);
