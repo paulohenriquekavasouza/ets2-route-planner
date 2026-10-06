@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <mutex>
 #include <map>
@@ -867,6 +868,7 @@ bool g_native_src = true;     // which side the place page fills
 int g_native_list_page = 0;   // page of a paged list
 char g_native_letter = 0;     // cargo page: initial shown (0 = all)
 bool g_native_leave = false;  // the action just run needs the game running: close instead of rebuilding
+int g_native_pages = 1;       // pages of the list on screen (1 = nothing to turn)
 std::vector<std::pair<uint32_t, std::function<void()>>> g_native_buttons; // id -> action, for the window that is open
 
 constexpr const char* kNBtn = "FF483E34";       // the grey-blue of the game's buttons
@@ -884,7 +886,10 @@ constexpr const char* kNFont = "/font/normal.font";
 constexpr const char* kNFontSmall = "/font/small.font";
 constexpr const char* kNFontBold = "/font/big_bold.font";
 
-std::string SiiString(const std::string& s) {
+std::string SiiString(std::string s) {
+  // the game's fonts have no arrow, ellipsis, middle dot or euro sign: they would show as "?"
+  for (const auto& [from, to] : {std::pair<const char*, const char*>{"\xE2\x86\x92", "-"}, {"\xE2\x80\xA6", "..."}, {"\xC2\xB7", "-"}, {"\xE2\x82\xAC", "EUR"}})
+    for (size_t at = 0; (at = s.find(from, at)) != std::string::npos; at += std::strlen(to)) s.replace(at, std::strlen(from), to);
   std::string out;
   for (const char ch : s) {
     if (ch == '"' || ch == '\\') out += '\\';
@@ -977,8 +982,17 @@ struct NativeUi {
   void TextButton(const std::string& text, int x, int y, int w, std::function<void()> action, bool selected = false, int h = 32) {
     Button(Centered(text), x, y, w, h, std::move(action), selected);
   }
+  // The game's own tick box (/material/ui/button/checkbox_1..4: off, off with the pointer over it, on, on
+  // with the pointer over it) with its label; clicking anywhere on the line flips it.
   void Toggle(const std::string& text, int x, int y, int w, bool* value) {
-    TextButton(text, x, y, w, [value] { *value = !*value; }, *value);
+    const auto face = [&](int picture) {
+      return " \"" + Layers({At(2, 1) + "<img src=/material/ui/button/checkbox_" + std::to_string(picture) + ".mat left=p1 top=p1>", LeftText(text, 42)}) + "\"\n";
+    };
+    const int off = *value ? 3 : 1, over = *value ? 4 : 2;
+    const std::string body = " n_pml:" + face(off) + " s_pml:" + face(over) + " s2_pml:" + face(over) + " d_pml:" + face(off) + " p_pml:" + face(over) + " button_type: normal\n";
+    const uint32_t id = next_id++;
+    Node("ui::button", body, x, y, w, 32, id, 6);
+    g_native_buttons.emplace_back(id, [value] { *value = !*value; });
   }
 
   std::string Script() const {
@@ -1060,10 +1074,11 @@ void NativeGoTo(NativePage page) {
 
 // "< Anterior   Página 2 de 5   Próxima >" on the bottom row, to the right
 void NativePager(NativeUi& ui, int pages) {
+  g_native_pages = pages;
   if (pages < 2) return;
-  if (g_native_list_page > 0) ui.TextButton("< Anterior", 930, 96, 130, [] { --g_native_list_page; });
+  if (g_native_list_page > 0) ui.TextButton("Anterior", 930, 96, 130, [] { --g_native_list_page; });
   ui.Title("Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 1065, 96, 150, 32);
-  if (g_native_list_page < pages - 1) ui.TextButton("Próxima >", 1220, 96, 130, [] { ++g_native_list_page; });
+  if (g_native_list_page < pages - 1) ui.TextButton("Próxima", 1220, 96, 130, [] { ++g_native_list_page; });
 }
 
 // ---- pages ----
@@ -1138,7 +1153,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
     ui.Draw("<align hstyle=center vstyle=center>" + std::string("<img src=/material/ui/cargo_logo/trailer_generic.mat width=56 height=56 color=40FFFFFF>") + "</align>", kX2, top - 150, w, 60);
     ui.Title(note ? note : "Nenhuma carga escolhida", kX2, top - 226, w, 28, kNFont, kNDim);
   }
-  if (!note) ui.TextButton(CargoPicked() ? "Trocar a carga" : "Escolher a carga", kX2 + kNPad, bottom + 88, bw, [] { NativeGoTo(NativePage::Cargo); }, !CargoPicked());
+  if (!note) ui.TextButton(CargoPicked() ? "Trocar a carga" : "Escolher a carga", kX2 + kNPad, bottom + 88, bw, [] { NativeGoTo(NativePage::Cargo); });
   ui.Toggle("Qualquer carga", kX2 + kNPad, bottom + 50, bw, &g_any_cargo);
   // ---- current job ----
   ui.Card("SERVIÇO ATUAL", kX3, top, w, h);
@@ -1178,7 +1193,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
         g_pending = Pending::Cancel;
         g_confirm_cancel = false;
         g_native_leave = true;
-      }, true);
+      });
       ui.TextButton("Não, manter", kX3 + kNPad, bottom + 50, bw, [] { g_confirm_cancel = false; });
     }
   }
@@ -1210,7 +1225,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
       ui.TextButton("INICIAR SERVIÇO", 520, ay, 400, [] {
         g_pending = Pending::Start;
         g_native_leave = true;
-      }, true, 42);
+      }, false, 42);
   }
   if (!CargoPicked() || !CanStart(jd.on_job))
     ui.Title(jd.on_job ? "Cancele o serviço atual para iniciar outro" : "Escolha a origem, o destino e uma carga para iniciar", 420, ay - 6, 600, 30, kNFont, kNDim);
@@ -1256,7 +1271,7 @@ void NativePlacePage(NativeUi& ui) {
     ui.Title("O número ao lado de cada cidade é a quantidade de empresas", cx, top - h + 30, cardw, 24, kNFontSmall, kNDim);
     NativePager(ui, pages);
   }
-  ui.TextButton("< Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
+  ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
   if (g_native_src)
     ui.TextButton("Usar a cidade atual", kX1 + 172, 96, 228, [] {
       PickCurrentCity();
@@ -1267,7 +1282,7 @@ void NativePlacePage(NativeUi& ui) {
 // Cargo: an index of initials on the left, the cargo with that initial on the right (each once; the
 // companies are the first pair that trades it, and the planner offers the other pairs).
 void NativeCargoPage(NativeUi& ui) {
-  ui.Title("CARGA  -  " + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city), 90, 772, 1260, 30, kNFontBold, kNAmber);
+  ui.Title("CARGA DE " + CityLabel(g_src.city) + " PARA " + CityLabel(g_dst.city), 90, 772, 1260, 30, kNFontBold, kNAmber);
   const int top = 738, h = 600;
   ui.Card("ÍNDICE", kX1, top, 250, h);
   const char* note = NativeCargoOptions();
@@ -1315,7 +1330,7 @@ void NativeCargoPage(NativeUi& ui) {
     ui.Title(g_any_cargo ? "Em cinza: cargas que essas empresas não negociam normalmente" : "Só as cargas que as empresas dessas cidades negociam", cx, top - h + 30, cardw, 24, kNFontSmall, kNDim);
     NativePager(ui, pages);
   }
-  ui.TextButton("< Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
+  ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
 }
 
 void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
@@ -1333,7 +1348,7 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
     ui.Label("para", x + 16, y - 30, 40, 24, kNFontSmall, kNDim);
     ui.Draw(Layers({At(0, 2) + Flag(CityFlag(f.dst_city), 30, 20), LeftText(Shorten(CityLabel(f.dst_city), 24), 40)}), x + 56, y - 30, 250, 24);
     ui.Draw(Layers({At(0, 2) + CargoIcon(f.cargo, 26), LeftText(Shorten(CargoName(g_data, f.cargo), 30), 36, kNFont, kNAmber)}), x + 330, y - 4, 330, 30);
-    ui.Label("~" + Tonnes(f.cargo) + "   " + Shorten(CompanyLabel(f.src_company), 16) + " -> " + Shorten(CompanyLabel(f.dst_company), 16), x + 366, y - 30, 440, 24, kNFontSmall, kNDim);
+    ui.Label("~" + Tonnes(f.cargo) + "   " + Shorten(CompanyLabel(f.src_company), 16) + " para " + Shorten(CompanyLabel(f.dst_company), 16), x + 366, y - 30, 440, 24, kNFontSmall, kNDim);
     if (can)
       ui.TextButton("Iniciar", x + 830, y - 13, 130, [i] {
         if (ApplyRoute(g_favorites[i])) {
@@ -1343,7 +1358,7 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
           g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
           g_status_error = true;
         }
-      }, true);
+      });
     ui.TextButton("Editar", x + 970, y - 13, 115, [i] {
       ApplyRoute(g_favorites[i]);
       g_editing = i;
@@ -1372,6 +1387,7 @@ bool WriteNativeScript() {
   DeleteFileA(NativeScriptPath().c_str());
   ++g_native_serial;
   g_native_buttons.clear();
+  g_native_pages = 1;
   NativeUi ui;
   ui.unit = "_nameless.rpl" + std::to_string(g_native_serial); // every name of this opening starts with it
   ui.group = ui.unit + ".grp";
@@ -1437,8 +1453,14 @@ void NativeExperiment() {
     const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, esc = ours && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     const bool released = was_down && !down, esc_pressed = esc && !esc_was_down;
     was_down = down, esc_was_down = esc;
+    // the wheel, as SPF's ImGui sees it (a notch lasts one frame there): down = next page
+    const float wheel = g_native_pages > 1 ? g_core->ui->UI_GetMouseWheel() : 0.0f;
+    const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, g_native_pages - 1);
     if (esc_pressed) {
       CloseNative();
+    } else if (turned != g_native_list_page) {
+      g_native_list_page = turned;
+      if (!ShowNative()) CloseNative();
     } else if (released) {
       std::function<void()> action;
       for (const auto& [id, act] : g_native_buttons)

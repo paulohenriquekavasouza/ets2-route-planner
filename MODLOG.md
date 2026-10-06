@@ -491,3 +491,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     "Outras empresas"; SERVIÇO ATUAL; faixa de opções; INICIAR), Local (países com bandeira à esquerda, cidades do país à direita com nº de
     empresas, numa página só), Carga (índice de iniciais + cada carga uma vez, com ícone e peso), Favoritas (linhas com bandeiras e ícone).
   - Esc (GetAsyncKeyState) fecha e retoma. NÃO testado em jogo.
+- **Etapa 4 confirmada em jogo ("ficou muito maneiro")**: faces próprias, bandeiras, ícones, logos e páginas funcionam. Ajustes pedidos:
+  dourado só para o que está selecionado (INICIAR, "Escolher a carga", "Iniciar" das favoritas e "Sim, cancelar" voltaram ao cinza);
+  opções viraram a caixa de marcação do jogo (`/material/ui/button/checkbox_1..4.mat`: desligada, desligada+ponteiro, ligada, ligada+ponteiro)
+  com o rótulo ao lado; roda do mouse vira a página das listas (`UI_GetMouseWheel` do SPF, lido no Update: não confirmado que chega com a UI
+  do SPF fechada); `SiiString` troca →, …, · e € (não existem nas fontes do jogo → "?") e remove < > (são marcação). NÃO testado em jogo.
