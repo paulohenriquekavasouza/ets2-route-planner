@@ -866,7 +866,11 @@ std::atomic<bool> g_native_toggle{false};
 enum class NativePage { Planner, Favorites, Place, Cargo, Map };
 int g_native_map_kind = 0; // EXPERIMENT (route preview, stage 1): which of the game's map widgets the map page shows
 int g_native_map_zoom = 6; // its zoom level: 4 (city) .. 7 (whole world); a map must be given one before it is first drawn
-int g_native_gps_check = 0; // DIAGNOSTICS: frames after the screen closed until the GPS is logged and then cleared
+// The game only computes a GPS route while it is running (seen in game: 0 km while our screen kept it
+// paused, the real distance a second after it resumed). So when a route goes to the GPS the game is let
+// run until the route is there (or 4 s pass) and is paused again.
+uint64_t g_native_route_until = 0; // tick count when the wait gives up; 0 = not waiting
+float g_native_route_km = 0, g_native_route_min = 0; // what the GPS answered for the route on the map page
 int g_native_map_probe = 0; // frames until the map and the GPS are logged (diagnostics of the experiment)
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
 std::string g_native_map_note;
@@ -1100,13 +1104,13 @@ const std::string& CityFlag(const std::string& city) {
 // map page is open and taken out again when it is left. The game refuses while a job is running.
 void NativeGpsPreview(bool on) {
   if (!on) {
-    // DIAGNOSTICS: the route stays in the GPS for a few seconds after the page is left, to learn whether the
-    // game only computes it once it is running again (NativeExperiment logs it and clears the GPS then)
-    if (g_native_gps) g_native_gps_check = 360;
+    if (g_native_gps) Log("mapa: GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")");
     g_native_gps = false;
+    if (g_native_route_until && !g_native_paused) g_native_paused = game::PauseForUi(true); // left in the middle of the wait
+    g_native_route_until = 0;
     return;
   }
-  g_native_gps_check = 0;
+  g_native_route_km = g_native_route_min = 0;
   g_native_map_note.clear();
   if (g_src.city.empty() || g_dst.city.empty()) {
     g_native_map_note = "Escolha a origem e o destino para ver a rota";
@@ -1124,6 +1128,11 @@ void NativeGpsPreview(bool on) {
   g_native_map_note = set == 2 ? "Rota enviada ao GPS do jogo: caminhão, " + CityLabel(g_src.city) + ", " + CityLabel(g_dst.city)
                                : set == 1 ? "O jogo só achou um dos dois pontos" : "O jogo recusou trocar o GPS (há um serviço em andamento?)";
   Log("mapa: GPS " + src_company + "." + g_src.city + " -> " + dst_company + "." + g_dst.city + ": " + std::to_string(set) + " ponto(s)");
+  if (set > 0 && g_native_paused && game::PauseForUi(false)) { // let the game run so it computes the route
+    g_native_paused = false;
+    g_native_route_until = GetTickCount64() + 4000;
+    g_native_map_note = "Calculando a rota no GPS do jogo...";
+  }
 }
 
 void NativeGoTo(NativePage page) {
@@ -1655,15 +1664,26 @@ void CloseNative() {
 
 void NativeExperiment() {
   static bool was_down = false, esc_was_down = false;
-  if (g_native_gps_check > 0 && (g_native_gps_check == 360 || g_native_gps_check % 120 == 1)) {
+  if (g_native_route_until && g_native_window) { // the game is running so that it computes the route: pause again once it has
     SPF_NavigationData nav{};
     if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
-    char line[160];
-    std::snprintf(line, sizeof line, "mapa: GPS do jogo %s: %.1f km, %.0f min (tela %s)", g_native_gps_check == 360 ? "ao sair da página" : "depois", nav.navigation_distance / 1000.0f,
-                  nav.navigation_time / 60.0f, g_native_window ? "aberta, jogo pausado" : "fechada, jogo rodando");
-    Log(line);
+    // not before 1.5 s: the telemetry may still hold the previous route for a moment (the first answer came after ~1.1 s)
+    const bool late = GetTickCount64() > g_native_route_until, ready = nav.navigation_distance > 0 && GetTickCount64() + 2500 > g_native_route_until;
+    if (ready || late) {
+      g_native_route_until = 0;
+      g_native_paused = game::PauseForUi(true);
+      g_native_route_km = nav.navigation_distance / 1000.0f, g_native_route_min = nav.navigation_time / 60.0f;
+      char line[200];
+      if (ready)
+        std::snprintf(line, sizeof line, "%s - %s: %s km, %dh%02d pelo GPS do jogo (a partir do caminhão)", CityLabel(g_src.city).c_str(), CityLabel(g_dst.city).c_str(),
+                      Thousands(static_cast<long long>(g_native_route_km)).c_str(), static_cast<int>(g_native_route_min) / 60, static_cast<int>(g_native_route_min) % 60);
+      else std::snprintf(line, sizeof line, "O GPS do jogo não calculou a rota em 4 s");
+      g_native_map_note = line;
+      Log(std::string("mapa: ") + line + (g_native_paused ? "" : " (FALHA ao pausar de novo)"));
+      if (!ShowNative()) CloseNative(); // the title shows the answer
+      return;
+    }
   }
-  if (g_native_gps_check > 0 && --g_native_gps_check == 0) Log("mapa: GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")");
   if (g_native_old && --g_native_old_in <= 0) game::CloseGameWindow(&g_native_old);
   // diagnostics: what the map widget holds and whether the game's GPS has a route, 1.5 s after the page opened
   if (g_native_window && g_native_page == NativePage::Map && g_native_map_probe > 0 && --g_native_map_probe == 0) {
@@ -1695,6 +1715,8 @@ void NativeExperiment() {
     }
     if (esc_pressed) {
       CloseNative();
+    } else if (g_native_route_until) {
+      // the game is running for a moment (no pointer): nothing to click
     } else if (!typed.empty()) {
       for (const char ch : typed) {
         if (ch == '\b') {

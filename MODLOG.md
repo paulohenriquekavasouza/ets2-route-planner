@@ -554,3 +554,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   (17 mil erros no game.log, que estourou o limite) → `false`. Cores da rota em map_data.sii: `navigation_color` 0xFF0C0CCF.
   Diagnóstico novo no log, 1,5 s após abrir: escala, zoom, estado (+0x888), máscara (+0x88c), modo (+0x894) do mapa e distância/tempo do
   GPS pela telemetria (para saber se o jogo calcula a rota pausado). NÃO testado em jogo.
+- **Etapa 2, causa achada (2026-10-06):** o GPS do jogo só CALCULA a rota com o jogo rodando. Log: 0,0 km com a tela aberta (pausado) e
+  1053,4 km / 922 min cerca de 1,1 s depois de fechar (Luxemburgo → Odense); o usuário viu a rota no conselheiro e depois a limpeza.
+  `SetGpsRoute` funciona (e dá a distância e o tempo REAIS da rota, coisa que o planejador só estimava). O estado do mapa não mostrou
+  nada errado (máscara +0x88c = 0, que é o valor normal no handler de ofertas).
+- Plugin: ao mandar a rota, despausa (`PauseForUi(false)`), espera a telemetria dar distância > 0 (mínimo 1,5 s, máximo 4 s), pausa de novo
+  e refaz a página com "Origem - Destino: N km, HhMM pelo GPS do jogo". Sem cliques durante a espera (sem cursor). Mapa abre no zoom 6.
+  NÃO testado em jogo; ainda não se sabe se o widget desenha a rota uma vez calculada.
