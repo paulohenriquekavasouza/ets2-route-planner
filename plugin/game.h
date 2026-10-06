@@ -429,11 +429,13 @@ inline int OpenGameWindow(void** slot, const char* name, const char* path) {
 //   pause : input = uimgr+0x3b0; input->vt[33](&0, &2); 0x38a770(uimgr);
 //           G = [exe+0x36ae718]; ++G[0xacc]; ++G[0xac8]; ++G[0xac0];
 //           first pause: G.b[0x1112] = 1 + 0x428b20(G) if it was not; G.b[0x13e0] = 0; 0x428240(G);
-//           ++G[0xac4]; 0x441f60([exe+0x36ae6d0], 2)
+//           0x441f60([exe+0x36ae6d0], 2)
 //   resume: the counters back; last resume: G.b[0x1112] = 0 + 0x428b20(G) if set; G.b[0x13e0] = 0;
 //           0x10aeb0(G+0x13b8); 0x58c1e0(G+0x13b8, 0); 0x428240(G);
 //           input->vt[21](&{0, -1}); 0x38a770(uimgr); 0x441f60([exe+0x36ae6d0], 1) unless [owner+0x35b8]
-// Every pause needs its resume (they are counters).
+// Every pause needs its resume (they are counters). G+0xac4 is NOT touched: only the game's full-screen
+// screens raise it, and with it the world is not drawn (black behind our window); a plain pause
+// (0xa05aa0) leaves it alone.
 constexpr uintptr_t GAME_STATE = 0x36ae718, PAUSE_MODE_OBJ = 0x36ae6d0, PAUSE_NOTIFY = 0x428b20, PAUSE_APPLY = 0x428240, PAUSE_TIMER_A = 0x10aeb0,
                     PAUSE_TIMER_B = 0x58c1e0, PAUSE_MODE = 0x441f60, UI_INPUT_REFRESH = 0x38a770;
 constexpr Sig kPauseSigs[] = {
@@ -468,7 +470,6 @@ inline bool PauseForUi(bool pause) {
         g[0x13e0] = 0;
         At<Fn>(PAUSE_APPLY)(g);
       }
-      ++count[1];
       At<void (*)(void*, int)>(PAUSE_MODE)(mode, 2);
     } else {
       --count[3], --count[2];
@@ -482,7 +483,6 @@ inline bool PauseForUi(bool pause) {
         At<void (*)(void*, int)>(PAUSE_TIMER_B)(g + 0x13b8, 0);
         At<Fn>(PAUSE_APPLY)(g);
       }
-      --count[1];
       struct {
         int32_t key, pad;
         int64_t value;

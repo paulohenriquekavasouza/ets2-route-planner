@@ -461,3 +461,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Conteúdo dinâmico: `WriteNativeScript` gera o .sii a cada abertura (favoritas: texto + botão "Iniciar" por linha, até 8; "Fechar").
   Clique = botão esquerdo solto (GetAsyncKeyState) com um botão nosso com o bit 24 ligado → fecha, retoma e inicia a favorita pelo mesmo
   caminho do F8 (ou avisa pela caixa do conselheiro se já há serviço). Mudanças de flags vão para o log. NÃO testado em jogo.
+- **Etapa 2, 2ª rodada:** (a) o jogo guarda o script já carregado: reabrir o mesmo caminho mostrou o conteúdo ANTIGO (janela de teste)
+  mesmo com o arquivo novo em disco → cada abertura grava `planner_N.sii` com nomes de unidade `_nameless.rplN.*` e apaga o anterior.
+  (b) o fundo continuou preto sem a parte da câmera → o culpado é o contador `G+0xac4`: só as telas cheias do jogo o sobem
+  (0x68ca62, 0x839a70, 0x88b610, 0xa059cb, 0xa63a8c…); a pausa comum (0xa05aa0) sobe só 0xacc, 0xac8, 0xac0. `PauseForUi` não mexe mais nele.
+  (c) flags do botão: 5CFF0101 → 5FFF0101 ao entrar o ponteiro e de volta a 5CFF0101 ao sair → o bit 24 serve para o clique.

@@ -881,14 +881,22 @@ std::string SiiButton(const std::string& name, const std::string& text, int l, i
                  l, r, t, t - 30, id, 4, parent, false);
 }
 
-std::string NativeScriptPath() {
+// The game keeps a script it has loaded: the same path (or the same unit names) again shows the old
+// content. So every opening gets its own file and names; the previous file is deleted.
+int g_native_serial = 0;
+std::string NativeScriptName() { return "planner_" + std::to_string(g_native_serial) + ".sii"; }
+std::string NativeScriptDir() {
   const char* home = std::getenv("USERPROFILE"); // ponytail: Documents in its default place; ask the shell if someone moved theirs
-  return std::string(home ? home : "") + "\\Documents\\Euro Truck Simulator 2\\routeplanner\\planner.sii";
+  return std::string(home ? home : "") + "\\Documents\\Euro Truck Simulator 2\\routeplanner\\";
 }
+std::string NativeScriptPath() { return NativeScriptDir() + NativeScriptName(); }
 
 // Writes the script. False if the file could not be written.
 bool WriteNativeScript() {
-  const std::string wnd = "_nameless.rpl.wnd", grp = "_nameless.rpl.grp";
+  DeleteFileA(NativeScriptPath().c_str());
+  ++g_native_serial;
+  const std::string unit = "_nameless.rpl" + std::to_string(g_native_serial); // every name of this opening starts with it
+  const std::string wnd = unit + ".wnd", grp = unit + ".grp";
   const int rows = std::min(static_cast<int>(g_favorites.size()), kNativeMaxFavs);
   const int height = 150 + std::max(rows, 1) * 46 + 70, top = 450 + height / 2, bottom = top - height, left = 360, right = 1080;
   SPF_JobData jd{};
@@ -906,21 +914,21 @@ bool WriteNativeScript() {
     names.push_back(name);
     kids += node;
   };
-  add("_nameless.rpl.bcg", SiiLabel("_nameless.rpl.bcg", "txt.window.bcg_rect4", "@@clr_bg_main@@", left + 1, right - 1, top - 1, bottom + 2, 1, 1, grp));
-  add("_nameless.rpl.title", SiiLabel("_nameless.rpl.title", "txt.title.center", "PLANEJADOR DE ROTAS", left + 40, right - 40, top - 10, top - 42, 10, 3, grp));
-  add("_nameless.rpl.info", SiiLabel("_nameless.rpl.info", "txt.normal.center", info, left + 30, right - 30, top - 64, top - 96, 11, 2, grp));
+  add(unit + ".bcg", SiiLabel(unit + ".bcg", "txt.window.bcg_rect4", "@@clr_bg_main@@", left + 1, right - 1, top - 1, bottom + 2, 1, 1, grp));
+  add(unit + ".title", SiiLabel(unit + ".title", "txt.title.center", "PLANEJADOR DE ROTAS", left + 40, right - 40, top - 10, top - 42, 10, 3, grp));
+  add(unit + ".info", SiiLabel(unit + ".info", "txt.normal.center", info, left + 30, right - 30, top - 64, top - 96, 11, 2, grp));
   for (int i = 0; i < rows; ++i) {
     const Favorite& f = g_favorites[i];
     const int y = top - 124 - i * 46;
     const std::string n = std::to_string(i);
-    add("_nameless.rpl.row" + n, SiiLabel("_nameless.rpl.row" + n, "txt.normal.left", CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city) + "   ·   " + CargoName(g_data, f.cargo),
+    add(unit + ".row" + n, SiiLabel(unit + ".row" + n, "txt.normal.left", CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city) + "   ·   " + CargoName(g_data, f.cargo),
                                            left + 30, right - 190, y, y - 30, 400 + i, 2, grp));
-    add("_nameless.rpl.go" + n, SiiButton("_nameless.rpl.go" + n, "Iniciar", right - 170, right - 30, y, kNativeFavBase + i, grp));
+    add(unit + ".go" + n, SiiButton(unit + ".go" + n, "Iniciar", right - 170, right - 30, y, kNativeFavBase + i, grp));
     g_native_buttons.push_back(kNativeFavBase + i);
   }
   if (rows == 0)
-    add("_nameless.rpl.none", SiiLabel("_nameless.rpl.none", "txt.normal.center", "Nenhuma rota favorita ainda. Salve rotas pelo F8.", left + 30, right - 30, top - 124, top - 154, 400, 2, grp));
-  add("_nameless.rpl.close", SiiButton("_nameless.rpl.close", "Fechar", 620, 820, bottom + 52, kNativeClose, grp));
+    add(unit + ".none", SiiLabel(unit + ".none", "txt.normal.center", "Nenhuma rota favorita ainda. Salve rotas pelo F8.", left + 30, right - 30, top - 124, top - 154, 400, 2, grp));
+  add(unit + ".close", SiiButton(unit + ".close", "Fechar", 620, 820, bottom + 52, kNativeClose, grp));
   g_native_buttons.push_back(kNativeClose);
 
   std::string group_body = " fitting: false\n my_children: " + std::to_string(names.size()) + "\n";
@@ -932,7 +940,7 @@ bool WriteNativeScript() {
               0, 1440, 900, 0, 0, 0, "null", true) +
       SiiNode("ui::group", grp, group_body, left, right, top, bottom, 111, 0, wnd, true) + kids + "}\n";
   const std::string path = NativeScriptPath();
-  CreateDirectoryA(path.substr(0, path.find_last_of('\\')).c_str(), nullptr);
+  CreateDirectoryA(NativeScriptDir().c_str(), nullptr);
   FILE* f = nullptr;
   if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return false;
   const bool ok = std::fwrite(script.data(), 1, script.size(), f) == script.size();
@@ -998,7 +1006,7 @@ void NativeExperiment() {
     return;
   }
   g_native_paused = game::PauseForUi(true);
-  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", "/home/routeplanner/planner.sii");
+  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", ("/home/routeplanner/" + NativeScriptName()).c_str());
   Log("janela do jogo (experimento): " + (why == 0 ? std::string("aberta") : "não abriu (motivo " + std::to_string(why) + ")") +
       (g_native_paused ? ", jogo pausado para o cursor" : ", NÃO consegui pausar o jogo"));
   if (why != 0 && g_native_paused) g_native_paused = !game::PauseForUi(false);
