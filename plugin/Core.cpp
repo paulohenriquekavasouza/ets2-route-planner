@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdio>
 #include <mutex>
+#include <map>
 #include <set>
 #include <string>
 
@@ -97,44 +98,168 @@ bool Matches(const std::string& text, const char* filter) {
 
 
 // =================================================================================================
-// Drawing
+// Drawing. The look follows the game's own panels since the 1.50 UI (Quick Info, Job Market):
+// graphite background, slightly lighter cards with a small grey caption, amber for titles, the
+// selected tab and the main action, grey for everything secondary.
 // =================================================================================================
-constexpr float kLabelW = 70.0f;
+struct Rgba {
+  float r, g, b, a;
+};
+constexpr Rgba kBg{0.106f, 0.114f, 0.125f, 0.97f};
+constexpr Rgba kCard{0.165f, 0.176f, 0.192f, 1.0f};
+constexpr Rgba kField{0.235f, 0.247f, 0.267f, 1.0f};
+constexpr Rgba kFieldHover{0.300f, 0.314f, 0.337f, 1.0f};
+constexpr Rgba kFieldDown{0.200f, 0.212f, 0.231f, 1.0f};
+constexpr Rgba kAmber{0.961f, 0.651f, 0.137f, 1.0f};
+constexpr Rgba kAmberHover{1.000f, 0.745f, 0.300f, 1.0f};
+constexpr Rgba kAmberDown{0.840f, 0.550f, 0.080f, 1.0f};
+constexpr Rgba kText{0.910f, 0.910f, 0.910f, 1.0f};
+constexpr Rgba kMuted{0.600f, 0.620f, 0.650f, 1.0f};
+constexpr Rgba kInk{0.090f, 0.090f, 0.100f, 1.0f}; // text on amber
+constexpr Rgba kRed{0.930f, 0.380f, 0.300f, 1.0f};
+constexpr Rgba kGreen{0.470f, 0.800f, 0.450f, 1.0f};
 
-void PlaceCombos(SPF_UI_API* ui, const char* id, Side& side) {
-  const Named* country = Find(g_data.countries, side.country);
-  std::string label = std::string("##country") + id;
-  ui->UI_AlignTextToFramePadding();
-  ui->UI_Text("País");
-  ui->UI_SameLine(kLabelW, -1);
-  ui->UI_SetNextItemWidth(-1);
-  if (ui->UI_BeginCombo(label.c_str(), country ? country->name.c_str() : "Todos os países", SPF_ComboFlags{})) {
-    if (ui->UI_Selectable("Todos os países", side.country.empty(), SPF_SelectableFlags{}, 0, 0)) side.country.clear();
-    for (const auto& c : g_data.countries)
-      if (ui->UI_Selectable((c.name + "##" + c.tok).c_str(), side.country == c.tok, SPF_SelectableFlags{}, 0, 0)) {
-        side.country = c.tok;
-        const Named* city = Find(g_data.cities, side.city);
-        if (city && city->parent != c.tok) side.city.clear();
-      }
-    ui->UI_EndCombo();
+constexpr float kW = 620.0f;  // content width: the window sizes itself around it
+constexpr float kPad = 14.0f; // inside a card
+constexpr float kGap = 10.0f; // between cards and between buttons side by side
+
+uint32_t U32(SPF_UI_API* ui, Rgba c, float alpha = 1.0f) { return ui->UI_ColorConvertFloat4ToU32(c.r, c.g, c.b, c.a * alpha); }
+
+// Colours and metrics for everything drawn in the window; undone when it goes out of scope.
+struct Theme {
+  SPF_UI_API* ui;
+  int colors = 0, vars = 0;
+  void Color(SPF_StyleColor i, Rgba c, float alpha = 1.0f) {
+    ui->UI_PushStyleColor(i, c.r, c.g, c.b, c.a * alpha);
+    ++colors;
   }
-  const std::string city = CityLabel(side.city);
-  label = std::string("##city") + id;
-  ui->UI_AlignTextToFramePadding();
-  ui->UI_Text("Cidade");
-  ui->UI_SameLine(kLabelW, -1);
-  ui->UI_SetNextItemWidth(-1);
-  if (ui->UI_BeginCombo(label.c_str(), city.empty() ? "Escolha a cidade" : city.c_str(), SPF_ComboFlags{})) {
-    ui->UI_SetNextItemWidth(-1);
-    ui->UI_InputTextWithHint((std::string("##filter") + id).c_str(), "Buscar cidade…", side.filter, sizeof side.filter, SPF_InputTextFlags{});
-    for (const auto& c : g_data.cities) {
-      if ((!side.country.empty() && c.parent != side.country) || !Matches(c.name, side.filter)) continue;
-      const Named* ctry = Find(g_data.countries, c.parent);
-      const std::string row = c.name + (side.country.empty() && ctry ? "  (" + ctry->name + ")" : "") + "##" + c.tok;
-      if (ui->UI_Selectable(row.c_str(), side.city == c.tok, SPF_SelectableFlags{}, 0, 0)) side.city = c.tok;
-    }
-    ui->UI_EndCombo();
+  void Var(SPF_StyleVar i, float v) {
+    ui->UI_PushStyleVarFloat(i, v);
+    ++vars;
   }
+  void Var(SPF_StyleVar i, float x, float y) {
+    ui->UI_PushStyleVarVec2(i, x, y);
+    ++vars;
+  }
+  explicit Theme(SPF_UI_API* u) : ui(u) {
+    Color(SPF_COLOR_TEXT, kText);
+    Color(SPF_COLOR_TEXT_DISABLED, kMuted);
+    Color(SPF_COLOR_CHILD_BG, kCard, 0.0f);
+    Color(SPF_COLOR_POPUP_BG, kCard);
+    Color(SPF_COLOR_BORDER, kField);
+    Color(SPF_COLOR_FRAME_BG, kField);
+    Color(SPF_COLOR_FRAME_BG_HOVERED, kFieldHover);
+    Color(SPF_COLOR_FRAME_BG_ACTIVE, kFieldDown);
+    Color(SPF_COLOR_BUTTON, kField);
+    Color(SPF_COLOR_BUTTON_HOVERED, kFieldHover);
+    Color(SPF_COLOR_BUTTON_ACTIVE, kFieldDown);
+    Color(SPF_COLOR_HEADER, kAmber, 0.38f);
+    Color(SPF_COLOR_HEADER_HOVERED, kAmber, 0.22f);
+    Color(SPF_COLOR_HEADER_ACTIVE, kAmber, 0.50f);
+    Color(SPF_COLOR_CHECK_MARK, kAmber);
+    Color(SPF_COLOR_SEPARATOR, kField);
+    Color(SPF_COLOR_SCROLLBAR_BG, kBg, 0.0f);
+    Color(SPF_COLOR_SCROLLBAR_GRAB, kFieldHover);
+    Color(SPF_COLOR_SCROLLBAR_GRAB_HOVERED, kMuted);
+    Color(SPF_COLOR_SCROLLBAR_GRAB_ACTIVE, kAmber);
+    Color(SPF_COLOR_TABLE_HEADER_BG, kField);
+    Color(SPF_COLOR_TABLE_BORDER_LIGHT, kField, 0.6f);
+    Color(SPF_COLOR_TABLE_BORDER_STRONG, kField);
+    Color(SPF_COLOR_TABLE_ROW_BG, kBg, 0.35f);
+    Color(SPF_COLOR_TABLE_ROW_BG_ALT, kBg, 0.0f);
+    Color(SPF_COLOR_NAV_HIGHLIGHT, kAmber);
+    Var(SPF_STYLE_VAR_FRAME_ROUNDING, 4.0f);
+    Var(SPF_STYLE_VAR_POPUP_ROUNDING, 4.0f);
+    Var(SPF_STYLE_VAR_CHILD_ROUNDING, 4.0f);
+    Var(SPF_STYLE_VAR_SCROLLBAR_ROUNDING, 4.0f);
+    Var(SPF_STYLE_VAR_SCROLLBAR_SIZE, 11.0f);
+    Var(SPF_STYLE_VAR_FRAME_BORDERSIZE, 0.0f);
+    Var(SPF_STYLE_VAR_FRAME_PADDING, 10.0f, 7.0f);
+    Var(SPF_STYLE_VAR_ITEM_SPACING, kGap, 8.0f);
+    Var(SPF_STYLE_VAR_CELL_PADDING, 8.0f, 5.0f);
+  }
+  ~Theme() {
+    ui->UI_PopStyleVar(vars);
+    ui->UI_PopStyleColor(colors);
+  }
+  Theme(const Theme&) = delete;
+  Theme& operator=(const Theme&) = delete;
+};
+
+// A font loaded by the host ("rp_body", "rp_small", "rp_title"); the current one stays if it is not there (yet).
+struct FontScope {
+  SPF_UI_API* ui;
+  bool on;
+  FontScope(SPF_UI_API* u, const char* name) : ui(u) {
+    const SPF_Font_Handle f = ui->UI_GetFont(name);
+    on = f != nullptr;
+    if (on) ui->UI_PushFont(f);
+  }
+  ~FontScope() {
+    if (on) ui->UI_PopFont();
+  }
+  FontScope(const FontScope&) = delete;
+  FontScope& operator=(const FontScope&) = delete;
+};
+
+void Colored(SPF_UI_API* ui, Rgba c, const char* text) { ui->UI_TextColored(c.r, c.g, c.b, c.a, text); }
+
+// The small grey line over a card or a field.
+void Caption(SPF_UI_API* ui, const char* text) {
+  FontScope small(ui, "rp_small");
+  Colored(ui, kMuted, text);
+}
+
+void Wrapped(SPF_UI_API* ui, Rgba c, const std::string& text, float width) {
+  ui->UI_PushTextWrapPos(ui->UI_GetCursorPosX() + width);
+  Colored(ui, c, text.c_str());
+  ui->UI_PopTextWrapPos();
+}
+
+// The main action of a screen (and the selected tab): amber with dark text.
+bool Primary(SPF_UI_API* ui, const char* label, float w, float h = 0) {
+  ui->UI_PushStyleColor(SPF_COLOR_BUTTON, kAmber.r, kAmber.g, kAmber.b, 1);
+  ui->UI_PushStyleColor(SPF_COLOR_BUTTON_HOVERED, kAmberHover.r, kAmberHover.g, kAmberHover.b, 1);
+  ui->UI_PushStyleColor(SPF_COLOR_BUTTON_ACTIVE, kAmberDown.r, kAmberDown.g, kAmberDown.b, 1);
+  ui->UI_PushStyleColor(SPF_COLOR_TEXT, kInk.r, kInk.g, kInk.b, 1);
+  const bool pressed = ui->UI_Button(label, w, h);
+  ui->UI_PopStyleColor(4);
+  return pressed;
+}
+bool Tab(SPF_UI_API* ui, const char* label, bool active, float w) { return active ? Primary(ui, label, w, 34) : ui->UI_Button(label, w, 34); }
+
+// A card: a rounded block with a caption, as tall as what is put in it. The block is painted with the
+// height measured on the previous frame (ponytail: one frame late when the content changes height;
+// the alternative is draw-list channels or fixed heights).
+std::map<std::string, float> g_card_h;
+struct Card {
+  const char* id;
+  float x, y, w;
+  float inner() const { return w - 2 * kPad; }
+};
+Card BeginCard(SPF_UI_API* ui, const char* id, const char* caption, float x, float y, float w) {
+  const auto known = g_card_h.find(id);
+  if (known != g_card_h.end()) ui->UI_DrawList_AddRectFilled(ui->UI_GetWindowDrawList(), x, y, x + w, y + known->second, U32(ui, kCard), 6.0f, SPF_DrawFlags{});
+  ui->UI_SetCursorScreenPos(x + kPad, y + kPad);
+  ui->UI_BeginGroup();
+  if (caption) Caption(ui, caption);
+  return {id, x, y, w};
+}
+Card BeginCard(SPF_UI_API* ui, const char* id, const char* caption, float w = kW) {
+  float x, y;
+  ui->UI_GetCursorScreenPos(&x, &y);
+  return BeginCard(ui, id, caption, x, y, w);
+}
+// Returns the card's bottom; the cursor is left under it, at its left edge.
+float EndCard(SPF_UI_API* ui, const Card& c) {
+  ui->UI_EndGroup();
+  float mx, my;
+  ui->UI_GetItemRectMax(&mx, &my);
+  const float h = my - c.y + kPad;
+  g_card_h[c.id] = h;
+  ui->UI_SetCursorScreenPos(c.x, c.y + h);
+  ui->UI_Dummy(c.w, 0);
+  return c.y + h;
 }
 
 std::string CompanyLabel(const std::string& tok) {
@@ -146,8 +271,6 @@ std::string CompanyLabel(const std::string& tok) {
 void SaveFavoritesFile() {
   if (!SaveFavorites(PluginDir() + "favorites.tsv", g_favorites)) Log("não consegui gravar favorites.tsv");
 }
-
-void AddFavorite(const Favorite& f);
 
 Favorite SelectedRoute() {
   const RouteOption& o = g_options[g_selected];
@@ -177,120 +300,6 @@ bool ApplyRoute(const Favorite& f) {
   return g_selected >= 0;
 }
 
-void DrawCurrentJob(SPF_UI_API* ui) {
-  SPF_JobData jd{};
-  if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-  ui->UI_SeparatorText("Serviço atual");
-  if (!jd.on_job) {
-    ui->UI_TextDisabled("Nenhum serviço em andamento.");
-    g_confirm_cancel = false;
-    return;
-  }
-  SPF_JobConstants jc{};
-  g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
-  char line[512];
-  std::snprintf(line, sizeof line, "%s  (%.1f t)", jc.cargo_name, jc.cargo_mass / 1000.0f);
-  ui->UI_Text(line);
-  std::snprintf(line, sizeof line, "%s, %s  →  %s, %s", jc.source_company, jc.source_city, jc.destination_company, jc.destination_city);
-  ui->UI_TextWrapped(line);
-  std::snprintf(line, sizeof line, "%u km planejados · prazo em %uh%02u · €%llu", jc.planned_distance_km, jd.remaining_delivery_minutes / 60,
-                jd.remaining_delivery_minutes % 60, static_cast<unsigned long long>(jc.income));
-  ui->UI_TextDisabled(line);
-  if (!g_confirm_cancel) {
-    if (ui->UI_Button("Ir até a carga (teleporte)", -1, 0)) {
-      g_pending = Pending::Teleport;
-    }
-    if (ui->UI_Button("Cancelar serviço", -1, 0)) g_confirm_cancel = true;
-  } else {
-    ui->UI_TextColored(0.95f, 0.65f, 0.2f, 1.0f, "Cancelar mesmo? O jogo cobra a multa de cancelamento.");
-    if (ui->UI_Button("Sim, cancelar", 140, 0)) {
-      g_pending = Pending::Cancel;
-      g_confirm_cancel = false;
-    }
-    ui->UI_SameLine(0, -1);
-    if (ui->UI_Button("Não", 80, 0)) g_confirm_cancel = false;
-  }
-}
-
-void DrawSaveFavorite(SPF_UI_API* ui);
-
-void DrawCargo(SPF_UI_API* ui, bool on_job) {
-  ui->UI_SeparatorText("Carga");
-  if (g_src.city.empty() || g_dst.city.empty()) {
-    ui->UI_TextDisabled("Escolha origem e destino.");
-    return;
-  }
-  ui->UI_Checkbox("Qualquer carga (mesmo que as empresas não a negociem)", &g_any_cargo);
-  const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
-  if (key != g_options_for) {
-    g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
-    g_options_for = key;
-    g_selected = -1;
-    g_cargo_pending = g_supported && !g_options.empty();
-  }
-  if (g_cargo_pending) {
-    ui->UI_TextDisabled("Consultando o jogo…");
-    return;
-  }
-  if (g_options.empty()) {
-    ui->UI_TextDisabled(g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas duas cidades. Marque \"Qualquer carga\".");
-    return;
-  }
-  ui->UI_SetNextItemWidth(-1);
-  ui->UI_InputTextWithHint("##cargo_filter", "Buscar carga ou empresa…", g_cargo_filter, sizeof g_cargo_filter, SPF_InputTextFlags{});
-  if (ui->UI_BeginListBox("##cargo", -1, 220)) {
-    for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
-      const auto& o = g_options[i];
-      char mass[24];
-      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
-      const std::string row = CargoName(g_data, o.cargo) + "   ·   " + mass + "   ·   " + o.src_name + " → " + o.dst_name +
-                              (o.off_market ? "   (fora do mercado)" : "");
-      if (!Matches(row, g_cargo_filter)) continue;
-      const bool sel = g_selected == i;
-      if (sel) ui->UI_PushStyleColor(SPF_COLOR_HEADER, 0.85f, 0.62f, 0.15f, 0.55f); // SPF's theme leaves selection invisible
-      if (ui->UI_Selectable(((sel ? "> " : "   ") + row + "##" + std::to_string(i)).c_str(), sel, SPF_SelectableFlags{}, 0, 0)) g_selected = i;
-      if (sel) ui->UI_PopStyleColor(1);
-    }
-    ui->UI_EndListBox();
-  }
-  const bool can = g_selected >= 0 && !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
-  ui->UI_Checkbox("Ir até a empresa de origem ao iniciar (teleporte)", &g_teleport);
-  ui->UI_Checkbox("Soltar o freio de mão após teleportar", &g_release_brake);
-  ui->UI_Checkbox("Antes de iniciar: 7h da manhã e tempo limpo", &g_morning);
-  ui->UI_Checkbox("Abastecer o caminhão ao iniciar", &g_refuel);
-  ui->UI_BeginDisabled(!can);
-  if (ui->UI_Button("Iniciar serviço", -1, 34)) g_pending = Pending::Start;
-  ui->UI_EndDisabled();
-  if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
-  DrawSaveFavorite(ui);
-}
-
-// Shown under the cargo list (so origin and destination are set); enabled once a cargo is selected.
-void DrawSaveFavorite(SPF_UI_API* ui) {
-  const char* missing = g_selected < 0 || g_selected >= static_cast<int>(g_options.size()) ? "Escolha a carga para poder salvar." : nullptr;
-  ui->UI_SeparatorText("Favoritas");
-  ui->UI_BeginDisabled(missing != nullptr);
-  if (g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size())) {
-    if (ui->UI_Button("Salvar alterações na favorita", -1, 0)) {
-      g_favorites[g_editing] = SelectedRoute();
-      SaveFavoritesFile();
-      g_status = "Favorita atualizada.";
-      g_status_error = false;
-      g_editing = -1;
-      g_view = View::Favorites;
-    }
-  } else if (ui->UI_Button("Salvar esta rota como favorita", -1, 0)) {
-    AddFavorite(SelectedRoute());
-  }
-  ui->UI_EndDisabled();
-  if (missing) ui->UI_TextDisabled(missing);
-  if (g_editing >= 0 && ui->UI_Button("Cancelar edição", -1, 0)) {
-    g_editing = -1;
-    g_view = View::Favorites;
-  }
-}
-
-// ---- favourites screen ----
 void AddFavorite(const Favorite& f) {
   const bool dup = std::find(g_favorites.begin(), g_favorites.end(), f) != g_favorites.end();
   if (!dup) {
@@ -301,55 +310,282 @@ void AddFavorite(const Favorite& f) {
   g_status_error = false;
 }
 
-void DrawFavorites(SPF_UI_API* ui, bool on_job) {
-  ui->UI_SeparatorText("Salvar como favorita");
-  ui->UI_BeginDisabled(!on_job);
-  if (ui->UI_Button("Salvar o serviço atual", -1, 0)) { // the job in progress, as the game reports it
+bool CanStart(bool on_job) { return !on_job && g_supported && g_pending == Pending::None && g_start_in < 0; }
+bool CargoPicked() { return g_selected >= 0 && g_selected < static_cast<int>(g_options.size()); }
+
+// ---- pieces ----
+void DrawHeader(SPF_UI_API* ui) {
+  float left, top, wx, wy;
+  ui->UI_GetCursorScreenPos(&left, &top);
+  ui->UI_GetWindowPos(&wx, &wy);
+  {
+    FontScope title(ui, "rp_title");
+    Colored(ui, kAmber, "PLANEJADOR DE ROTAS");
+  }
+  float tw, th;
+  ui->UI_CalcTextSize("F8 fecha", &tw, &th);
+  ui->UI_SameLine(left - wx + kW - tw, -1); // SameLine counts from the window's edge, not from its padding
+  ui->UI_TextDisabled("F8 fecha");
+  float x, y;
+  ui->UI_GetCursorScreenPos(&x, &y);
+  ui->UI_DrawList_AddRectFilled(ui->UI_GetWindowDrawList(), x, y, x + kW, y + 2, U32(ui, kAmber, 0.75f), 0, SPF_DrawFlags{});
+  ui->UI_Dummy(kW, 4);
+}
+
+void DrawTabs(SPF_UI_API* ui) {
+  const std::string favs = "FAVORITAS (" + std::to_string(g_favorites.size()) + ")";
+  const float w = (kW - kGap) / 2;
+  if (Tab(ui, "PLANEJAR", g_view == View::Planner, w)) g_view = View::Planner;
+  ui->UI_SameLine(0, -1);
+  if (Tab(ui, favs.c_str(), g_view == View::Favorites, w)) g_view = View::Favorites;
+}
+
+void DrawCurrentJob(SPF_UI_API* ui, const SPF_JobData& jd) {
+  const Card card = BeginCard(ui, "job", "SERVIÇO ATUAL");
+  if (!jd.on_job) {
+    ui->UI_TextDisabled("Nenhum serviço em andamento.");
+    g_confirm_cancel = false;
+  } else {
     SPF_JobConstants jc{};
     g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
-    AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
+    char line[512];
+    std::snprintf(line, sizeof line, "%s  ·  %.1f t", jc.cargo_name, jc.cargo_mass / 1000.0f);
+    Colored(ui, kAmber, line);
+    std::snprintf(line, sizeof line, "%s, %s  →  %s, %s", jc.source_company, jc.source_city, jc.destination_company, jc.destination_city);
+    Wrapped(ui, kText, line, card.inner());
+    std::snprintf(line, sizeof line, "%u km planejados  ·  prazo em %uh%02u  ·  € %llu", jc.planned_distance_km, jd.remaining_delivery_minutes / 60,
+                  jd.remaining_delivery_minutes % 60, static_cast<unsigned long long>(jc.income));
+    ui->UI_TextDisabled(line);
+    const float half = (card.inner() - kGap) / 2;
+    if (!g_confirm_cancel) {
+      if (ui->UI_Button("Ir até a carga (teleporte)", half, 0)) g_pending = Pending::Teleport;
+      ui->UI_SameLine(0, -1);
+      if (ui->UI_Button("Cancelar serviço", half, 0)) g_confirm_cancel = true;
+    } else {
+      Wrapped(ui, kAmber, "Cancelar mesmo? O jogo cobra a multa de cancelamento.", card.inner());
+      if (Primary(ui, "Sim, cancelar", half)) {
+        g_pending = Pending::Cancel;
+        g_confirm_cancel = false;
+      }
+      ui->UI_SameLine(0, -1);
+      if (ui->UI_Button("Não, manter", half, 0)) g_confirm_cancel = false;
+    }
   }
-  ui->UI_EndDisabled();
-  const bool picked = g_selected >= 0 && g_selected < static_cast<int>(g_options.size());
-  ui->UI_BeginDisabled(!picked);
-  if (ui->UI_Button("Salvar a rota escolhida em Planejar", -1, 0)) AddFavorite(SelectedRoute());
-  ui->UI_EndDisabled();
-  if (picked) {
-    ui->UI_TextDisabled((CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) + "  ·  " + CargoName(g_data, g_options[g_selected].cargo)).c_str());
+  EndCard(ui, card);
+}
+
+void PlaceCombos(SPF_UI_API* ui, const char* id, Side& side, float w) {
+  const Named* country = Find(g_data.countries, side.country);
+  std::string label = std::string("##country") + id;
+  Caption(ui, "PAÍS");
+  ui->UI_SetNextItemWidth(w);
+  if (ui->UI_BeginCombo(label.c_str(), country ? country->name.c_str() : "Todos os países", SPF_ComboFlags{})) {
+    if (ui->UI_Selectable("Todos os países", side.country.empty(), SPF_SelectableFlags{}, 0, 0)) side.country.clear();
+    for (const auto& c : g_data.countries)
+      if (ui->UI_Selectable((c.name + "##" + c.tok).c_str(), side.country == c.tok, SPF_SelectableFlags{}, 0, 0)) {
+        side.country = c.tok;
+        const Named* city = Find(g_data.cities, side.city);
+        if (city && city->parent != c.tok) side.city.clear();
+      }
+    ui->UI_EndCombo();
   }
-  ui->UI_SeparatorText("Rotas favoritas");
-  if (g_favorites.empty()) {
-    ui->UI_TextWrapped("Nenhuma favorita ainda. Em \"Planejar\", escolha origem, destino e carga e use \"Adicionar esta rota às favoritas\".");
+  const std::string city = CityLabel(side.city);
+  label = std::string("##city") + id;
+  Caption(ui, "CIDADE");
+  ui->UI_SetNextItemWidth(w);
+  if (ui->UI_BeginCombo(label.c_str(), city.empty() ? "Escolha a cidade" : city.c_str(), SPF_ComboFlags{})) {
+    ui->UI_SetNextItemWidth(-1);
+    ui->UI_InputTextWithHint((std::string("##filter") + id).c_str(), "Buscar cidade…", side.filter, sizeof side.filter, SPF_InputTextFlags{});
+    for (const auto& c : g_data.cities) {
+      if ((!side.country.empty() && c.parent != side.country) || !Matches(c.name, side.filter)) continue;
+      const Named* ctry = Find(g_data.countries, c.parent);
+      const std::string row = c.name + (side.country.empty() && ctry ? "  (" + ctry->name + ")" : "") + "##" + c.tok;
+      if (ui->UI_Selectable(row.c_str(), side.city == c.tok, SPF_SelectableFlags{}, 0, 0)) side.city = c.tok;
+    }
+    ui->UI_EndCombo();
+  }
+}
+
+// Origin and destination side by side, with the two shortcuts that fill them in above.
+void DrawRoute(SPF_UI_API* ui) {
+  const float half = (kW - kGap) / 2;
+  ui->UI_BeginDisabled(!g_supported || g_pending != Pending::None);
+  if (ui->UI_Button("Origem = cidade atual", half, 0)) g_pending = Pending::CurrentCity; // needs the game: runs in Update
+  ui->UI_SameLine(0, -1);
+  if (ui->UI_Button("Maior rota possível", half, 0)) g_pending = Pending::Longest;
+  ui->UI_EndDisabled();
+  float x, y;
+  ui->UI_GetCursorScreenPos(&x, &y);
+  const Card src = BeginCard(ui, "src", "ORIGEM", x, y, half);
+  PlaceCombos(ui, "src", g_src, src.inner());
+  const float bottom = EndCard(ui, src);
+  const Card dst = BeginCard(ui, "dst", "DESTINO", x + half + kGap, y, half);
+  PlaceCombos(ui, "dst", g_dst, dst.inner());
+  EndCard(ui, dst);
+  ui->UI_SetCursorScreenPos(x, bottom);
+  ui->UI_Dummy(kW, 0);
+}
+
+void DrawCargo(SPF_UI_API* ui) {
+  const Card card = BeginCard(ui, "cargo", "CARGA");
+  const char* note = nullptr;
+  if (g_src.city.empty() || g_dst.city.empty()) {
+    note = "Escolha origem e destino para ver as cargas.";
+  } else {
+    const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
+    if (key != g_options_for) {
+      g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
+      g_options_for = key;
+      g_selected = -1;
+      g_cargo_pending = g_supported && !g_options.empty();
+    }
+    ui->UI_SetNextItemWidth(card.inner() - 190);
+    ui->UI_InputTextWithHint("##cargo_filter", "Buscar carga ou empresa…", g_cargo_filter, sizeof g_cargo_filter, SPF_InputTextFlags{});
+    ui->UI_SameLine(0, -1);
+    ui->UI_Checkbox("Qualquer carga", &g_any_cargo);
+    if (ui->UI_IsItemHovered(SPF_HoveredFlags{})) ui->UI_SetTooltip("Lista todas as cargas, mesmo as que essas empresas não negociam.");
+    if (g_cargo_pending) note = "Consultando o jogo…";
+    else if (g_options.empty()) note = g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas duas cidades. Marque \"Qualquer carga\".";
+  }
+  if (note) {
+    Wrapped(ui, kMuted, note, card.inner());
+    EndCard(ui, card);
     return;
   }
-  const bool can_start = !on_job && g_supported && g_pending == Pending::None && g_start_in < 0;
-  int remove = -1;
-  for (int i = 0; i < static_cast<int>(g_favorites.size()); ++i) {
-    const Favorite& f = g_favorites[i];
-    const std::string id = "##fav" + std::to_string(i);
-    ui->UI_Text((CityLabel(f.src_city) + "  →  " + CityLabel(f.dst_city)).c_str());
-    char mass[24];
-    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
-    ui->UI_TextDisabled((CargoName(g_data, f.cargo) + "  ·  " + mass + "  ·  " + CompanyLabel(f.src_company) + " → " + CompanyLabel(f.dst_company)).c_str());
-    ui->UI_BeginDisabled(!can_start);
-    if (ui->UI_Button(("Iniciar" + id).c_str(), 150, 0)) {
-      if (ApplyRoute(f)) g_pending = Pending::Start; // same path as the planner's button
-      else {
-        g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
-        g_status_error = true;
-      }
+  bool off_market = false;
+  const auto flags = static_cast<SPF_TableFlags>(SPF_TABLE_FLAG_ROW_BG | SPF_TABLE_FLAG_SCROLL_Y | SPF_TABLE_FLAG_BORDERS_INNER_H | SPF_TABLE_FLAG_SIZING_STRETCH_PROP);
+  if (ui->UI_BeginTable("##cargo", 4, flags, card.inner(), 214, 0)) {
+    ui->UI_TableSetupScrollFreeze(0, 1);
+    ui->UI_TableSetupColumn("Carga", SPF_TABLE_COLUMN_FLAG_WIDTH_STRETCH, 2.3f, 0);
+    ui->UI_TableSetupColumn("Peso", SPF_TABLE_COLUMN_FLAG_WIDTH_FIXED, 58.0f, 0);
+    ui->UI_TableSetupColumn("Empresa de origem", SPF_TABLE_COLUMN_FLAG_WIDTH_STRETCH, 1.7f, 0);
+    ui->UI_TableSetupColumn("Empresa de destino", SPF_TABLE_COLUMN_FLAG_WIDTH_STRETCH, 1.7f, 0);
+    ui->UI_TableHeadersRow();
+    for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
+      const auto& o = g_options[i];
+      const std::string name = CargoName(g_data, o.cargo) + (o.off_market ? " *" : "");
+      if (!Matches(name + " " + o.src_name + " " + o.dst_name, g_cargo_filter)) continue;
+      off_market |= o.off_market;
+      char mass[24];
+      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+      ui->UI_TableNextRow(SPF_TableRowFlags{}, 0);
+      ui->UI_TableNextColumn();
+      if (ui->UI_Selectable((name + "##" + std::to_string(i)).c_str(), g_selected == i, SPF_SELECTABLE_FLAG_SPAN_ALL_COLUMNS, 0, 0)) g_selected = i;
+      ui->UI_TableNextColumn();
+      ui->UI_TextDisabled(mass);
+      ui->UI_TableNextColumn();
+      ui->UI_Text(o.src_name.c_str());
+      ui->UI_TableNextColumn();
+      ui->UI_Text(o.dst_name.c_str());
+    }
+    ui->UI_EndTable();
+  }
+  if (off_market) Caption(ui, "* fora do mercado: essas empresas não negociam essa carga normalmente");
+  EndCard(ui, card);
+}
+
+void DrawStartOptions(SPF_UI_API* ui) {
+  const Card card = BeginCard(ui, "opts", "AO INICIAR O SERVIÇO");
+  const float second = card.inner() / 2; // SameLine counts from the start of the card's group
+  ui->UI_Checkbox("Teleportar até a empresa de origem", &g_teleport);
+  ui->UI_SameLine(second, -1);
+  ui->UI_Checkbox("Soltar o freio de mão", &g_release_brake);
+  ui->UI_Checkbox("7h da manhã e tempo limpo", &g_morning);
+  ui->UI_SameLine(second, -1);
+  ui->UI_Checkbox("Abastecer o caminhão", &g_refuel);
+  EndCard(ui, card);
+}
+
+void DrawPlannerActions(SPF_UI_API* ui, bool on_job) {
+  const bool editing = g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size());
+  const float side = 210.0f, h = 40.0f;
+  ui->UI_BeginDisabled(!CargoPicked());
+  if (editing) {
+    if (ui->UI_Button("Salvar alterações", side, h)) {
+      g_favorites[g_editing] = SelectedRoute();
+      SaveFavoritesFile();
+      g_status = "Favorita atualizada.";
+      g_status_error = false;
+      g_editing = -1;
+      g_view = View::Favorites;
+    }
+  } else if (ui->UI_Button("Salvar como favorita", side, h)) {
+    AddFavorite(SelectedRoute());
+  }
+  ui->UI_EndDisabled();
+  ui->UI_SameLine(0, -1);
+  ui->UI_BeginDisabled(!CargoPicked() || !CanStart(on_job));
+  if (Primary(ui, "INICIAR SERVIÇO", kW - side - kGap, h)) g_pending = Pending::Start;
+  ui->UI_EndDisabled();
+  if (editing && ui->UI_Button("Cancelar edição", side, 0)) {
+    g_editing = -1;
+    g_view = View::Favorites;
+  }
+  if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
+  else if (!CargoPicked()) ui->UI_TextDisabled("Escolha origem, destino e uma carga.");
+}
+
+void DrawFavorites(SPF_UI_API* ui, bool on_job) {
+  {
+    const Card card = BeginCard(ui, "favsave", "SALVAR COMO FAVORITA");
+    const float half = (card.inner() - kGap) / 2;
+    ui->UI_BeginDisabled(!on_job);
+    if (ui->UI_Button("O serviço atual", half, 0)) { // the job in progress, as the game reports it
+      SPF_JobConstants jc{};
+      g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+      AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
     }
     ui->UI_EndDisabled();
     ui->UI_SameLine(0, -1);
-    if (ui->UI_Button(("Editar" + id).c_str(), 110, 0)) {
-      ApplyRoute(f);
-      g_editing = i;
-      g_view = View::Planner;
-    }
-    ui->UI_SameLine(0, -1);
-    if (ui->UI_Button(("Remover" + id).c_str(), 110, 0)) remove = i;
-    ui->UI_Separator();
+    ui->UI_BeginDisabled(!CargoPicked());
+    if (ui->UI_Button("A rota escolhida em Planejar", half, 0)) AddFavorite(SelectedRoute());
+    ui->UI_EndDisabled();
+    if (CargoPicked())
+      Wrapped(ui, kMuted, "Em Planejar: " + CityLabel(g_src.city) + " → " + CityLabel(g_dst.city) + "  ·  " + CargoName(g_data, g_options[g_selected].cargo), card.inner());
+    EndCard(ui, card);
   }
+  const Card card = BeginCard(ui, "favlist", "ROTAS FAVORITAS");
+  if (g_favorites.empty()) {
+    Wrapped(ui, kMuted, "Nenhuma favorita ainda. Em Planejar, escolha origem, destino e carga e use \"Salvar como favorita\".", card.inner());
+    EndCard(ui, card);
+    return;
+  }
+  int remove = -1;
+  const float bw = 92.0f, text_w = card.inner() - 3 * bw - 3 * kGap - 14;
+  // ponytail: fixed-height scrolling list (the window sizes itself to its content); ~5 favourites fit without scrolling
+  if (ui->UI_BeginChild("##favs", card.inner(), 400, false, SPF_WindowFlags{})) {
+    for (int i = 0; i < static_cast<int>(g_favorites.size()); ++i) {
+      const Favorite& f = g_favorites[i];
+      const std::string id = "##fav" + std::to_string(i);
+      char mass[24];
+      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
+      ui->UI_BeginGroup();
+      Wrapped(ui, kText, CityLabel(f.src_city) + "  →  " + CityLabel(f.dst_city), text_w);
+      Wrapped(ui, kAmber, CargoName(g_data, f.cargo) + "  ·  " + mass, text_w);
+      Wrapped(ui, kMuted, CompanyLabel(f.src_company) + " → " + CompanyLabel(f.dst_company), text_w);
+      ui->UI_EndGroup();
+      ui->UI_SameLine(text_w + kGap, -1);
+      ui->UI_BeginDisabled(!CanStart(on_job));
+      if (Primary(ui, ("Iniciar" + id).c_str(), bw)) {
+        if (ApplyRoute(f)) g_pending = Pending::Start; // same path as the planner's button
+        else {
+          g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
+          g_status_error = true;
+        }
+      }
+      ui->UI_EndDisabled();
+      ui->UI_SameLine(0, -1);
+      if (ui->UI_Button(("Editar" + id).c_str(), bw, 0)) {
+        ApplyRoute(f);
+        g_editing = i;
+        g_view = View::Planner;
+      }
+      ui->UI_SameLine(0, -1);
+      if (ui->UI_Button(("Remover" + id).c_str(), bw, 0)) remove = i;
+      ui->UI_Separator();
+    }
+  }
+  ui->UI_EndChild();
   if (remove >= 0) {
     g_favorites.erase(g_favorites.begin() + remove);
     SaveFavoritesFile();
@@ -357,23 +593,8 @@ void DrawFavorites(SPF_UI_API* ui, bool on_job) {
     g_status = "Favorita removida.";
     g_status_error = false;
   }
+  EndCard(ui, card);
   if (on_job) ui->UI_TextDisabled("Cancele o serviço atual para iniciar outro.");
-}
-
-void DrawTopBar(SPF_UI_API* ui) {
-  const std::string favs = "Favoritas (" + std::to_string(g_favorites.size()) + ")";
-  const bool planner = g_view == View::Planner;
-  if (planner) ui->UI_PushStyleColor(SPF_COLOR_BUTTON, 0.85f, 0.62f, 0.15f, 0.55f);
-  if (ui->UI_Button("Planejar", 120, 0)) g_view = View::Planner;
-  if (planner) ui->UI_PopStyleColor(1);
-  ui->UI_SameLine(0, -1);
-  if (!planner) ui->UI_PushStyleColor(SPF_COLOR_BUTTON, 0.85f, 0.62f, 0.15f, 0.55f);
-  if (ui->UI_Button(favs.c_str(), 150, 0)) g_view = View::Favorites;
-  if (!planner) ui->UI_PopStyleColor(1);
-  ui->UI_SameLine(0, -1);
-  ui->UI_BeginDisabled(!g_supported || g_pending != Pending::None);
-  if (ui->UI_Button("Maior rota", 130, 0)) g_pending = Pending::Longest;
-  ui->UI_EndDisabled();
 }
 
 void DrawCursor(SPF_UI_API* ui) { // SPF only shows a cursor for its own windows
@@ -387,37 +608,32 @@ void DrawCursor(SPF_UI_API* ui) { // SPF only shows a cursor for its own windows
 void Draw(SPF_UI_API* ui, void*) {
   std::lock_guard lock(g_mu);
   DrawCursor(ui);
-  SPF_Font_Handle font = ui->UI_GetFont("rp_body");
-  if (font) ui->UI_PushFont(font);
+  const Theme theme(ui);
+  const FontScope body(ui, "rp_body");
+  float wx, wy, ww, wh;
+  ui->UI_GetWindowPos(&wx, &wy);
+  ui->UI_GetWindowSize(&ww, &wh);
+  ui->UI_DrawList_AddRectFilled(ui->UI_GetWindowDrawList(), wx, wy, wx + ww, wy + wh, U32(ui, kBg), 8.0f, SPF_DrawFlags{}); // over SPF's own window colour
+  DrawHeader(ui);
   if (!g_loaded) {
-    ui->UI_TextWrapped("routes.tsv não encontrado ao lado da DLL. Rode o deploy.ps1 (ele gera o arquivo a partir dos dados do jogo).");
+    Wrapped(ui, kRed, "routes.tsv não encontrado ao lado da DLL. Rode o deploy.ps1 (ele gera o arquivo a partir dos dados do jogo).", kW);
+    return;
+  }
+  if (!g_supported) Wrapped(ui, kRed, "Versão do jogo não reconhecida: iniciar e cancelar estão desligados.", kW);
+  SPF_JobData jd{};
+  if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
+  DrawTabs(ui);
+  DrawCurrentJob(ui, jd);
+  if (g_view == View::Favorites) {
+    DrawFavorites(ui, jd.on_job);
   } else {
-    if (!g_supported) ui->UI_TextColored(0.9f, 0.3f, 0.25f, 1.0f, "Versão do jogo não reconhecida: iniciar/cancelar desligados.");
-    DrawTopBar(ui);
-    DrawCurrentJob(ui);
-    SPF_JobData jd{};
-    if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
-    if (g_view == View::Favorites) {
-      DrawFavorites(ui, jd.on_job);
-    } else {
-      if (g_editing >= 0) ui->UI_TextColored(0.95f, 0.75f, 0.3f, 1.0f, "Editando uma favorita: mude o que quiser e salve.");
-      ui->UI_SeparatorText("Origem");
-      ui->UI_BeginDisabled(!g_supported || g_pending != Pending::None);
-      if (ui->UI_Button("Cidade atual", -1, 0)) g_pending = Pending::CurrentCity; // needs the game: runs in OnUpdate
-      ui->UI_EndDisabled();
-      PlaceCombos(ui, "src", g_src);
-      ui->UI_SeparatorText("Destino");
-      PlaceCombos(ui, "dst", g_dst);
-      DrawCargo(ui, jd.on_job);
-    }
+    if (g_editing >= 0) Wrapped(ui, kAmber, "Editando uma favorita: mude o que quiser e salve.", kW);
+    DrawRoute(ui);
+    DrawCargo(ui);
+    DrawStartOptions(ui);
+    DrawPlannerActions(ui, jd.on_job);
   }
-  if (!g_status.empty()) {
-    ui->UI_Spacing();
-    if (g_status_error) ui->UI_TextColored(0.95f, 0.4f, 0.3f, 1.0f, g_status.c_str());
-    else ui->UI_TextColored(0.45f, 0.85f, 0.45f, 1.0f, g_status.c_str());
-  }
-  ui->UI_TextDisabled("F8 fecha");
-  if (font) ui->UI_PopFont();
+  if (!g_status.empty()) Wrapped(ui, g_status_error ? kRed : kGreen, g_status, kW);
 }
 
 // =================================================================================================

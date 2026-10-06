@@ -403,3 +403,15 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Confirmado em jogo: a mensagem aparece na caixa do conselheiro (título laranja, 3 linhas, acentos ok, ícone de sino do tipo 2)
   e é retirada após ~10 s. A seta "→" saía como "?" (a fonte do jogo não tem o glifo) → trocada por "->".
 - Sobre a 2.5.1: `game::ShowHint/HideHint` (fila do conselheiro, 0x623a80 / 0x623970) e a mensagem "Serviço iniciado".
+
+## Interface nova (após a v2.6, 2026-10-05, ainda sem versão)
+- Pedido: UI refinada como a do jogo (1.61) e organizada. Referência: painéis da UI nova do jogo (1.50+/1.58: Quick Info, mercado de cargas):
+  fundo grafite, cartões um pouco mais claros com legenda cinza pequena, âmbar em títulos/aba ativa/ação principal, cinza no resto.
+- Núcleo (`Core.cpp`, seção Drawing reescrita): `Theme` (cores/métricas empilhadas só dentro da janela), `Card` (bloco arredondado
+  pintado com a altura medida no quadro anterior), `Primary`/`Tab`, legendas (`Caption`). Largura fixa de conteúdo 620 px.
+  Organização: cabeçalho próprio → abas PLANEJAR / FAVORITAS → cartão SERVIÇO ATUAL → atalhos (cidade atual, maior rota) →
+  ORIGEM e DESTINO lado a lado → CARGA em tabela (carga, peso, empresa de origem, empresa de destino) → AO INICIAR O SERVIÇO (2×2) →
+  [Salvar como favorita] [INICIAR SERVIÇO]. Favoritas: cartão de salvar + lista rolável com Iniciar/Editar/Remover por linha.
+- Hospedeira: janela sem barra de título, tamanho automático, sem barra de rolagem; fontes novas `rp_small` (14) e `rp_title` (24).
+  → precisa "Recarregar Framework". `SameLine(offset)` conta da borda da janela (ou do início do grupo), não do padding.
+- Compila; aparência NÃO vista em jogo ainda.

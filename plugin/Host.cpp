@@ -128,7 +128,9 @@ void OnUpdate() {
 const uint16_t kGlyphs[] = {0x0020, 0x00FF, 0x2026, 0x2026, 0x2190, 0x2192, 0x20AC, 0x20AC, 0};
 
 void OnRegisterUI(SPF_UI_API* ui) {
-  const auto flags = static_cast<SPF_WindowFlags>(SPF_WINDOW_FLAG_NO_COLLAPSE | SPF_WINDOW_FLAG_NO_SAVED_SETTINGS);
+  // no title bar (the core draws its own header) and sized by its content: the layout has a fixed width
+  const auto flags = static_cast<SPF_WindowFlags>(SPF_WINDOW_FLAG_NO_TITLE_BAR | SPF_WINDOW_FLAG_NO_COLLAPSE | SPF_WINDOW_FLAG_NO_SAVED_SETTINGS |
+                                                  SPF_WINDOW_FLAG_ALWAYS_AUTO_RESIZE | SPF_WINDOW_FLAG_NO_SCROLLBAR);
   ui->UI_RegisterDrawCallbackWithFlags(PLUGIN_NAME, "Planejador", DrawPlanner, nullptr, flags);
   if (SPF_Window_Handle* w = ui->UI_GetWindowHandle(PLUGIN_NAME, "Planejador")) ui->UI_SetVisibility(w, false);
   static bool fonts_requested = false;
@@ -136,8 +138,10 @@ void OnRegisterUI(SPF_UI_API* ui) {
     fonts_requested = true;
     char win[MAX_PATH] = {};
     GetWindowsDirectoryA(win, MAX_PATH);
-    const SPF_Font_Config body{18.0f, false, kGlyphs};
+    const SPF_Font_Config body{18.0f, false, kGlyphs}, small{14.0f, false, kGlyphs}, title{24.0f, false, kGlyphs};
     ui->UI_LoadFontFromFile("rp_body", (std::string(win) + "\\Fonts\\seguisb.ttf").c_str(), &body);
+    ui->UI_LoadFontFromFile("rp_small", (std::string(win) + "\\Fonts\\seguisb.ttf").c_str(), &small);
+    ui->UI_LoadFontFromFile("rp_title", (std::string(win) + "\\Fonts\\segoeuib.ttf").c_str(), &title);
   }
 }
 
