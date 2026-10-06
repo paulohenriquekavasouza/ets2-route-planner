@@ -868,6 +868,10 @@ NativePage g_native_page = NativePage::Planner;
 bool g_native_src = true;     // which side the place page fills
 int g_native_list_page = 0;   // page of a paged list
 char g_native_letter = 0;     // cargo page: initial shown (0 = all)
+std::string g_native_filter;  // cargo page: what was typed (lower case, no accents); empty = no filter
+bool g_native_by_weight = false, g_native_reverse = false; // cargo page: order (name A-Z by default; weight = heaviest first)
+void* g_native_old = nullptr; // the window being replaced: it stays for a couple of frames so the screen never blinks
+int g_native_old_in = 0;      // frames until it is closed
 bool g_native_leave = false;  // the action just run needs the game running: close instead of rebuilding
 int g_native_pages = 1;       // pages of the list on screen (1 = nothing to turn)
 std::vector<std::pair<uint32_t, std::function<void()>>> g_native_buttons; // id -> action, for the window that is open
@@ -1047,6 +1051,22 @@ char Initial(const std::string& s) {
   return 0;
 }
 
+// Lower case without accents ("Óleo" -> "oleo"), to match what was typed.
+std::string Fold(const std::string& s) {
+  std::string out;
+  for (size_t i = 0; i < s.size(); ++i) {
+    const unsigned char a = static_cast<unsigned char>(s[i]);
+    if (a < 0x80) {
+      out += static_cast<char>(std::tolower(a));
+    } else if (a == 0xC3 && i + 1 < s.size()) {
+      const char base = Initial(s.substr(i, 2));
+      if (base) out += static_cast<char>(std::tolower(base));
+      ++i;
+    }
+  }
+  return out;
+}
+
 std::string Tonnes(const std::string& cargo) {
   char mass[24];
   std::snprintf(mass, sizeof mass, "%.0f t", CargoMass(g_data, cargo) / 1000.0);
@@ -1069,6 +1089,7 @@ const std::string& CityFlag(const std::string& city) {
 }
 
 void NativeGoTo(NativePage page) {
+  if (page == NativePage::Cargo && g_native_page != NativePage::Cargo) g_native_filter.clear(); // a new visit starts with an empty box
   g_native_page = page;
   g_native_list_page = 0;
 }
@@ -1240,6 +1261,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
       g_any_cargo = false;
       g_cargo_filter[0] = 0;
       g_native_letter = 0;
+      g_native_filter.clear();
       g_editing = -1;
       g_status.clear();
     });
@@ -1295,50 +1317,74 @@ void NativePlacePage(NativeUi& ui) {
     });
 }
 
-// Cargo: an index of initials on the left, the cargo with that initial on the right (each once; the
-// companies are the first pair that trades it, and the planner offers the other pairs).
+// Cargo: on the left an index of initials, a box that filters by what is typed and the order; on the
+// right the cargo (each once; the companies are the first pair that trades it, and the planner offers
+// the other pairs). The box is drawn with the game's widgets; the typing comes from our keyboard hook
+// (a window of ours has no handler class to own a real input line).
 void NativeCargoPage(NativeUi& ui) {
   ui.Title("CARGA DE " + CityLabel(g_src.city) + " PARA " + CityLabel(g_dst.city), 90, 772, 1260, 30, kNFontBold, kNAmber);
-  const int top = 738, h = 600;
+  const int top = 738, h = 600, x = kX1 + 20, w = 210;
   ui.Card("ÍNDICE", kX1, top, 250, h);
   const char* note = NativeCargoOptions();
-  struct Item {
-    int option;
-    bool off_market;
-  };
-  std::vector<Item> items; // one per cargo, in the options' order (by name)
+  std::vector<int> items; // one option per cargo, in the options' order (by name)
   std::set<char> letters;
   for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
     if (i > 0 && g_options[i].cargo == g_options[i - 1].cargo) continue;
-    const char initial = Initial(CargoName(g_data, g_options[i].cargo));
+    const std::string name = CargoName(g_data, g_options[i].cargo);
+    const char initial = Initial(name);
     letters.insert(initial);
-    if (!g_native_letter || initial == g_native_letter) items.push_back({i, g_options[i].off_market});
+    if ((!g_native_letter || initial == g_native_letter) && (g_native_filter.empty() || Fold(name).find(g_native_filter) != std::string::npos)) items.push_back(i);
   }
-  ui.TextButton("Todas", kX1 + 20, top - 50, 210, [] {
+  if (g_native_by_weight)
+    std::stable_sort(items.begin(), items.end(), [](int a, int b) { return CargoMass(g_data, g_options[a].cargo) > CargoMass(g_data, g_options[b].cargo); });
+  if (g_native_reverse) std::reverse(items.begin(), items.end());
+
+  ui.TextButton("Todas", x, top - 50, w, [] {
     g_native_letter = 0;
     g_native_list_page = 0;
   }, g_native_letter == 0);
   for (char ch = 'A'; ch <= 'Z'; ++ch) {
     if (!letters.count(ch)) continue; // only the initials there is cargo for
     const int n = ch - 'A';
-    ui.TextButton(std::string(1, ch), kX1 + 20 + (n % 4) * 54, top - 96 - (n / 4) * 40, 48, [ch] {
+    ui.TextButton(std::string(1, ch), x + (n % 4) * 54, top - 92 - (n / 4) * 38, 48, [ch] {
       g_native_letter = ch;
       g_native_list_page = 0;
-    }, g_native_letter == ch, 34);
+    }, g_native_letter == ch, 32);
   }
-  ui.Toggle("Qualquer carga", kX1 + 20, top - h + 54, 210, &g_any_cargo);
+  // the filter box
+  ui.Label("FILTRAR", x, top - 364, w, 22, kNFontSmall, kNAmber);
+  ui.Draw(Layers({Fill("FF1E1A16"), g_native_filter.empty() ? LeftText("Digite para filtrar", 12, kNFont, kNDim) : LeftText(g_native_filter + "_", 12)}), x, top - 388, g_native_filter.empty() ? w : w - 40, 34);
+  if (!g_native_filter.empty())
+    ui.TextButton("x", x + w - 36, top - 388, 36, [] {
+      g_native_filter.clear();
+      g_native_list_page = 0;
+    }, false, 34);
+  // the order: clicking the one in use turns it around
+  ui.Label("ORDENAR POR", x, top - 438, w, 22, kNFontSmall, kNAmber);
+  const auto order = [](bool by_weight) {
+    if (g_native_by_weight == by_weight) g_native_reverse = !g_native_reverse;
+    else g_native_by_weight = by_weight, g_native_reverse = false;
+    g_native_list_page = 0;
+  };
+  ui.TextButton("Nome", x, top - 462, 101, [order] { order(false); }, !g_native_by_weight);
+  ui.TextButton("Peso", x + 109, top - 462, 101, [order] { order(true); }, g_native_by_weight);
+  ui.Title(g_native_by_weight ? (g_native_reverse ? "mais leve primeiro" : "mais pesada primeiro") : (g_native_reverse ? "de Z a A" : "de A a Z"), x, top - 498, w, 22, kNFontSmall, kNDim);
+  ui.Toggle("Qualquer carga", x, top - h + 54, w, &g_any_cargo);
+
   const int cx = kX1 + 265, cardw = 995;
   ui.Card(std::string("CARGAS") + (g_native_letter ? std::string("  -  ") + g_native_letter : std::string()), cx, top, cardw, h);
   if (note) {
     ui.Title(note, cx, top - 280, cardw, 30, kNFont, kNDim);
+  } else if (items.empty()) {
+    ui.Title("Nenhuma carga com esse filtro", cx, top - 280, cardw, 30, kNFont, kNDim);
   } else {
-    const int cols = 3, rows = 17, per_page = cols * rows, pages = std::max(1, (static_cast<int>(items.size()) + per_page - 1) / per_page), w = 318;
+    const int cols = 3, rows = 17, per_page = cols * rows, pages = std::max(1, (static_cast<int>(items.size()) + per_page - 1) / per_page), bw = 318;
     g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
     const std::string chosen = CargoPicked() ? g_options[g_selected].cargo : std::string();
     for (int i = g_native_list_page * per_page, n = 0; i < static_cast<int>(items.size()) && n < per_page; ++i, ++n) {
-      const RouteOption& o = g_options[items[i].option];
-      ui.Button(Layers({At(8, 3) + CargoIcon(o.cargo, 22), LeftText(Shorten(CargoName(g_data, o.cargo), 28), 40, kNFont, items[i].off_market ? kNDim : kNWhite), RightText(Tonnes(o.cargo))}),
-                cx + 12 + (n / rows) * (w + 8), top - 46 - (n % rows) * 31, w, 28, [option = items[i].option] {
+      const RouteOption& o = g_options[items[i]];
+      ui.Button(Layers({At(8, 3) + CargoIcon(o.cargo, 22), LeftText(Shorten(CargoName(g_data, o.cargo), 28), 40, kNFont, o.off_market ? kNDim : kNWhite), RightText(Tonnes(o.cargo))}),
+                cx + 12 + (n / rows) * (bw + 8), top - 46 - (n % rows) * 31, bw, 28, [option = items[i]] {
                   g_selected = option;
                   NativeGoTo(NativePage::Planner);
                 }, o.cargo == chosen, true);
@@ -1398,11 +1444,33 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
   NativePager(ui, pages);
 }
 
-// ---- the mouse wheel ----
+// ---- the mouse wheel and the keyboard ----
 // Neither the game's UI (no handler class) nor SPF's ImGui (its wheel does not arrive while SPF's own
 // windows are closed) tells us about the wheel, so while the screen is open a low-level mouse hook
-// counts the notches. Such a hook is called on the thread that installed it and needs that thread to
-// pump messages, hence a thread of ours: it must be gone before this DLL is unloaded (WheelStop).
+// counts the notches, and on the cargo page a keyboard hook takes what is typed for the filter box
+// (letters, digits, space, backspace: those keys are kept from the game meanwhile). Such hooks are
+// called on the thread that installed them and need that thread to pump messages, hence a thread of
+// ours: it must be gone before this DLL is unloaded (WheelStop).
+std::atomic<bool> g_typing{false}; // the cargo page is on screen
+std::mutex g_typed_mu;
+std::string g_typed; // keys not yet used: lower-case letters, digits, ' ', '\b'
+
+LRESULT CALLBACK KeyProc(int code, WPARAM what, LPARAM data) {
+  if (code == HC_ACTION && g_typing && (what == WM_KEYDOWN || what == WM_KEYUP)) {
+    const DWORD vk = reinterpret_cast<const KBDLLHOOKSTRUCT*>(data)->vkCode;
+    const char ch = vk >= 'A' && vk <= 'Z' ? static_cast<char>(vk + 32) : (vk >= '0' && vk <= '9') || vk == VK_SPACE ? static_cast<char>(vk) : vk == VK_BACK ? '\b' : 0;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    if (ch && pid == GetCurrentProcessId()) {
+      if (what == WM_KEYDOWN) {
+        const std::lock_guard lock(g_typed_mu);
+        g_typed += ch;
+      }
+      return 1; // ours: the game does not see it
+    }
+  }
+  return CallNextHookEx(nullptr, code, what, data);
+}
 std::atomic<int> g_wheel{0};       // notches not yet used: up > 0
 std::atomic<DWORD> g_wheel_tid{0}; // the hook thread, once it runs
 std::thread g_wheel_thread;
@@ -1422,10 +1490,12 @@ void WheelStart() {
     HMODULE self = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&WheelProc), &self);
     const HHOOK hook = SetWindowsHookExW(WH_MOUSE_LL, WheelProc, self, 0);
+    const HHOOK keys = SetWindowsHookExW(WH_KEYBOARD_LL, KeyProc, self, 0);
     g_wheel_tid = GetCurrentThreadId();
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     }
     if (hook) UnhookWindowsHookEx(hook);
+    if (keys) UnhookWindowsHookEx(keys);
   });
 }
 void WheelStop() {
@@ -1477,17 +1547,29 @@ bool WriteNativeScript() {
 
 // Shows the current page (again). The game stays paused while the window is swapped.
 bool ShowNative() {
-  if (g_native_window) game::CloseGameWindow(&g_native_window);
-  if (!WriteNativeScript()) {
-    Log("janela do jogo: não consegui gravar " + NativeScriptPath());
+  // The new window goes up before the old one comes down (two frames later, in NativeExperiment): closing
+  // first left a frame with nothing on screen, a blink at every click. Each window has its own name,
+  // because showing a window takes down any other with the same name.
+  void* const old = g_native_window;
+  g_native_window = nullptr;
+  int why = -1;
+  if (!WriteNativeScript()) Log("janela do jogo: não consegui gravar " + NativeScriptPath());
+  else if ((why = game::OpenGameWindow(&g_native_window, ("rpl" + std::to_string(g_native_serial)).c_str(), ("/home/routeplanner/" + NativeScriptName()).c_str())) != 0)
+    Log("janela do jogo: não abriu (motivo " + std::to_string(why) + ")");
+  g_typing = why == 0 && g_native_page == NativePage::Cargo;
+  if (why != 0) {
+    g_native_window = old; // nothing new: the caller closes what there is
     return false;
   }
-  const int why = game::OpenGameWindow(&g_native_window, "routeplanner", ("/home/routeplanner/" + NativeScriptName()).c_str());
-  if (why != 0) Log("janela do jogo: não abriu (motivo " + std::to_string(why) + ")");
-  return why == 0;
+  if (g_native_old) game::CloseGameWindow(&g_native_old); // two rebuilds in a row
+  g_native_old = old;
+  g_native_old_in = 2;
+  return true;
 }
 
 void CloseNative() {
+  g_typing = false;
+  if (g_native_old) game::CloseGameWindow(&g_native_old);
   const bool closed = !g_native_window || game::CloseGameWindow(&g_native_window);
   const bool resumed = g_native_paused && game::PauseForUi(false);
   Log(std::string("janela do jogo: ") + (closed ? "fechada" : "falha ao fechar") + (g_native_paused ? (resumed ? ", jogo retomado" : ", FALHA ao retomar o jogo") : ""));
@@ -1499,6 +1581,7 @@ void CloseNative() {
 
 void NativeExperiment() {
   static bool was_down = false, esc_was_down = false;
+  if (g_native_old && --g_native_old_in <= 0) game::CloseGameWindow(&g_native_old);
   if (g_native_window) {
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
@@ -1508,8 +1591,23 @@ void NativeExperiment() {
     was_down = down, esc_was_down = esc;
     const int wheel = ours ? g_wheel.exchange(0) : (g_wheel = 0, 0); // down = next page
     const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, std::max(g_native_pages, 1) - 1);
+    std::string typed;
+    if (g_typing) {
+      const std::lock_guard lock(g_typed_mu);
+      typed.swap(g_typed);
+    }
     if (esc_pressed) {
       CloseNative();
+    } else if (!typed.empty()) {
+      for (const char ch : typed) {
+        if (ch == '\b') {
+          if (!g_native_filter.empty()) g_native_filter.pop_back();
+        } else if (g_native_filter.size() < 20) {
+          g_native_filter += ch;
+        }
+      }
+      g_native_list_page = 0;
+      if (!ShowNative()) CloseNative();
     } else if (turned != g_native_list_page) {
       g_native_list_page = turned;
       if (!ShowNative()) CloseNative();
