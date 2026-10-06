@@ -1258,7 +1258,9 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
   // The route on the game's own map screen. (The map page of the first attempts, a map widget inside our
   // window, is not reachable any more: such a widget shows the world but not the GPS route.)
-  ui.TextButton("Ver a rota no mapa do jogo", kX1 + kNPad, bottom + 50, bw, [on_job = jd.on_job] { StartMapPreview(on_job); });
+  // (Opening the game's own map screen, StartMapPreview, shows the route but leaves the world black when the
+  // planner comes back; the user prefers the map inside our window.)
+  ui.TextButton("Ver no mapa (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1737,6 +1739,25 @@ void CloseNative() {
 void NativeExperiment() {
   static bool was_down = false, esc_was_down = false;
   if (!g_native_window) RunMapPreview();
+  // DIAGNOSTICS: once a second, the bytes of the map widget on screen go to a file next to the plugin:
+  // map_real.bin while the game's own map screen (key M) is open, map_ours.bin while our map page is.
+  static int dump_tick = 0;
+  if (++dump_tick % 60 == 0) {
+    static uint8_t bytes[game::MAP_DUMP_SIZE];
+    uintptr_t address = 0;
+    void* const real = g_native_window ? nullptr : game::FindGameWindow("world_map");
+    const bool ours = g_native_window && g_native_page == NativePage::Map && !g_native_route_until;
+    if ((real && game::CopyMapBytes(real, true, bytes, &address)) || (ours && game::CopyMapBytes(g_native_window, false, bytes, &address))) {
+      FILE* f = nullptr;
+      if (fopen_s(&f, (PluginDir() + (real ? "map_real.bin" : "map_ours.bin")).c_str(), "wb") == 0 && f) {
+        std::fwrite(&address, sizeof address, 1, f);
+        std::fwrite(bytes, 1, sizeof bytes, f);
+        std::fclose(f);
+      }
+      static int logged = 0;
+      if (logged++ < 6) Log(std::string("mapa: bytes do mapa ") + (real ? "do jogo" : "da nossa janela") + " gravados");
+    }
+  }
   if (g_native_route_until && g_native_window) { // the game is running so that it computes the route: pause again once it has
     SPF_NavigationData nav{};
     if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);

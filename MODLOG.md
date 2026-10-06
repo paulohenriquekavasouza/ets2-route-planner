@@ -572,3 +572,12 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   (lista do gerente de UI) e o fluxo `StartMapPreview/RunMapPreview`: rota → GPS, fecha a nossa tela, espera o GPS (1,5–4 s), abre o mapa
   do jogo; quando o jogador fecha o mapa, limpa o GPS e reabre o planejador. Em serviço: abre o mapa sem mexer no GPS.
   A página com o widget embutido ficou inalcançável (código ainda lá, a limpar se a etapa 3 vingar). NÃO testado em jogo.
+- **Etapa 3, teste (2026-10-06):** `OpenMapScreen` funciona: a tela de mapa do jogo abre com a rota em vermelho (Luxemburgo → Roterdã,
+  400 km / 5 h 42) e, ao fechar com Esc, o plugin limpa o GPS e reabre o planejador. MAS o planejador volta com o mundo PRETO (mesmo
+  sintoma do contador `G+0xac4` das telas cheias: a tela do desktop ainda está saindo quando pausamos de novo) e o usuário achou pior;
+  precisou reiniciar o jogo. Pedido: voltar ao mapa DENTRO da nossa janela. O botão voltou a abrir a página do widget; o fluxo
+  `StartMapPreview` ficou no código, sem botão.
+- **Diagnóstico para o widget embutido:** a cada segundo o plugin grava os bytes (0xA00) do widget de mapa em arquivo ao lado do plugin:
+  `map_real.bin` quando a tela de mapa do jogo (tecla M, janela "world_map" → `ui::portal` id 100000 → janela filha +0x98 → mapa id
+  100000) está aberta, `map_ours.bin` quando a nossa página de mapa está. Comparar os dois deve mostrar o que o `world_map_hdl` configura
+  (rota do GPS, escala inicial).

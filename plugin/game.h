@@ -656,6 +656,42 @@ inline bool GameWindowOpen(const char* name) {
   return false;
 }
 
+// DIAGNOSTICS for the map experiment: the raw bytes of a map widget, to compare the one of the game's
+// own map screen (which draws the GPS route) with the one inside our window (which does not).
+// The game's screen: window "world_map" -> ui::portal id 100000 -> its child window (+0x98) -> map id 100000.
+constexpr size_t MAP_DUMP_SIZE = 0xA00;
+inline bool CopyMapBytes(void* window, bool through_portal, uint8_t* out, uintptr_t* address) {
+  __try {
+    uint8_t* w = static_cast<uint8_t*>(window);
+    if (through_portal) {
+      uint8_t* const portal = FindWidget(w, 100000);
+      w = portal ? Ptr(portal, 0x98) : nullptr;
+    }
+    uint8_t* const map = FindWidget(w, 100000);
+    if (!map) return false;
+    std::memcpy(out, map, MAP_DUMP_SIZE);
+    *address = reinterpret_cast<uintptr_t>(map);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+inline void* FindGameWindow(const char* name) {
+  __try {
+    uint8_t* const mgr = *At<uint8_t**>(UI_MANAGER);
+    if (!mgr) return nullptr;
+    uint8_t* const head = mgr + 0xd8;
+    int guard = 0;
+    for (uint8_t* node = Ptr(head, 0); node && node != head && guard < 200; node = Ptr(node, 0), ++guard) {
+      uint8_t* const window = Ptr(node, 0x10);
+      const char* const its = window ? *reinterpret_cast<const char* const*>(window + 0xa0) : nullptr;
+      if (its && std::strcmp(its, name) == 0) return window;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+  return nullptr;
+}
+
 inline bool CloseGameWindow(void** slot) {
   __try {
     void* const mgr = *At<void**>(UI_MANAGER);
