@@ -422,6 +422,28 @@ inline int OpenGameWindow(void** slot, const char* name, const char* path) {
     return 9;
   }
 }
+// The game's own cursor only exists while the game is paused for a screen (driving, the mouse belongs to
+// the camera). The pair the game uses for its message screens (0xa63a8c, 0xa05974 -> 0x9c1160):
+//   0x68ca20(adviser = [actor+0x30])   hides the adviser panels, pauses the simulation, hands the mouse to the UI
+//   0x68bb60()                         undoes it
+// They keep counters ([exe+0x36ae718]+0xac0..0xacc), so every pause needs its resume.
+constexpr uintptr_t UI_PAUSE = 0x68ca20, UI_RESUME = 0x68bb60;
+constexpr unsigned char kUiPauseSig[2][10] = {{0x53, 0x57, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x05, 0xaa},
+                                              {0x48, 0x89, 0x4c, 0x24, 0x08, 0x53, 0x55, 0x56, 0x57, 0x48}};
+inline bool PauseForUi(bool pause) {
+  if (std::memcmp(At<const void*>(UI_PAUSE), kUiPauseSig[0], 10) != 0 || std::memcmp(At<const void*>(UI_RESUME), kUiPauseSig[1], 10) != 0) return false;
+  __try {
+    uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
+    uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
+    uint8_t* const adviser = Alive(actor) ? Ptr(actor, 0x30) : nullptr;
+    if (!adviser) return false;
+    At<void (*)(void*)>(pause ? UI_PAUSE : UI_RESUME)(adviser);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 // A widget of a game window by its `id:` in the script (what the game's 0x385e20 does): children are
 // the array at +0x70 (count +0x78), the id is the u32 at +0x14, containers have bit 7 of +0x60.
 inline uint8_t* FindWidget(uint8_t* w, uint32_t id, int depth = 0) {

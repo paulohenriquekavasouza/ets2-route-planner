@@ -448,3 +448,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Ideia para conteúdo dinâmico sem RE do "set text": reescrever o .sii e recriar a janela.
 - Diagnóstico instalado: com a janela aberta, o log lista os bytes do botão (id 200) que mudam (para achar "sobre"/"pressionado").
 - Em aberto: como ligar o ponteiro do mouse (no jogo, o botão direito alterna o ponteiro do conselheiro de rota).
+- **Cursor nativo (2026-10-05):** dirigindo, o mouse é da câmera; o cursor do jogo só existe com o jogo pausado para uma tela.
+  Par usado pelo jogo nas telas de mensagem: `0x68ca20(conselheiro = [actor+0x30])` esconde os painéis do conselheiro, pausa a simulação
+  (contadores em [exe+0x36ae718]+0xac0/0xac4/0xac8/0xacc; byte [exe+0x36ae740]+0x28 = 0) e entrega o mouse à UI; `0x68bb60()` desfaz.
+  A função 0x688e30 (ao mudar a pausa) grava [gerente UI+0x348] = !pausado. Plugin: `game::PauseForUi(bool)`; Home pausa + abre, Home fecha + retoma.
+  Botão de teste: +0x1d7 alterna 80/89 e os floats em +0x208/+0x218 variam a cada quadro (animação de foco), sem mouse. NÃO testado em jogo.

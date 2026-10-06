@@ -839,7 +839,14 @@ void RunPending() {
 // shows a script of ours; F8 stays the real planner.
 // The key comes from the host (SPF swallows Home before Windows' key state sees it: reading it directly found nothing).
 void* g_native_window = nullptr;
+bool g_native_paused = false; // we paused the game for the window (its cursor only exists while paused)
 std::atomic<bool> g_native_toggle{false};
+void CloseNative() {
+  const bool closed = game::CloseGameWindow(&g_native_window);
+  const bool resumed = g_native_paused && game::PauseForUi(false);
+  Log(std::string("janela do jogo (experimento): ") + (closed ? "fechada" : "falha ao fechar") + (g_native_paused ? (resumed ? ", jogo retomado" : ", FALHA ao retomar o jogo") : ""));
+  g_native_paused = false;
+}
 // While the window is open: log which bytes of the test button (id 200) change, to learn where the game
 // keeps "pointer over it" and "pressed" (a window of ours has no handler class to be told about clicks).
 void WatchNativeButton() {
@@ -873,11 +880,14 @@ void NativeExperiment() {
   WatchNativeButton();
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
-    Log(std::string("janela do jogo (experimento): ") + (game::CloseGameWindow(&g_native_window) ? "fechada" : "falha ao fechar"));
+    CloseNative();
     return;
   }
+  g_native_paused = game::PauseForUi(true);
   const int why = game::OpenGameWindow(&g_native_window, "routeplanner", "/home/routeplanner/planner.sii");
-  Log("janela do jogo (experimento): " + (why == 0 ? std::string("aberta") : "não abriu (motivo " + std::to_string(why) + ")"));
+  Log("janela do jogo (experimento): " + (why == 0 ? std::string("aberta") : "não abriu (motivo " + std::to_string(why) + ")") +
+      (g_native_paused ? ", jogo pausado para o cursor" : ", NÃO consegui pausar o jogo"));
+  if (why != 0 && g_native_paused) g_native_paused = !game::PauseForUi(false);
 }
 
 void Key(int key) {
@@ -926,7 +936,7 @@ void DrawPlanner(SPF_UI_API* ui) { Draw(ui, nullptr); }
 // The DLL is going away: give the mouse back. Nothing here calls into the game.
 void Shutdown(bool game_calls_ok) {
   std::lock_guard lock(g_mu);
-  if (game_calls_ok && g_native_window) game::CloseGameWindow(&g_native_window); // on a framework unload it stays open: no game calls there
+  if (game_calls_ok && g_native_window) CloseNative(); // on a framework unload it stays open (and paused): no game calls there
   if (g_core && g_core->ui && g_mouse_taken) {
     g_api.SetMouseBlocked(false);
     g_core->ui->UI_SetMouseOverride(false);
