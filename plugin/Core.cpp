@@ -1127,9 +1127,9 @@ const std::string& CityFlag(const std::string& city) {
 // picked in the planner is sent to the GPS (truck -> origin company -> destination company) while the
 // map page is open and taken out again when it is left. The game refuses while a job is running.
 std::string ViaKey() {
-  std::string key = g_src.city + "|" + g_dst.city;
-  if (CargoPicked()) key += "|" + g_options[g_selected].cargo + "|" + g_options[g_selected].src_company + "|" + g_options[g_selected].dst_company;
-  return key;
+  // the two cities only: picking the cargo afterwards (which picks the companies) dropped the route the
+  // player had just made (test of 2026-10-06); the points are on the road between the cities either way
+  return g_src.city + "|" + g_dst.city;
 }
 
 void NativeGpsPreview(bool on) {
@@ -1162,7 +1162,13 @@ void NativeGpsPreview(bool on) {
     // ponytail: the levels' reach in world units is an estimate from screenshots (level 7 shows all of Europe)
     g_native_map_zoom = span < 3500 ? 5 : span < 13000 ? 6 : 7;
   }
+  const std::vector<game::NavNode> own = OwnVia(); // with the companies of before
   g_via_ends_ok = game::CompanyNode(stops[0][0], stops[0][1], &g_via_ends[0]) && game::CompanyNode(stops[1][0], stops[1][1], &g_via_ends[1]);
+  if (!g_via.empty() && g_via_ends_ok) { // the companies may be others now (another cargo): the player's points between the new ones
+    g_via.assign(1, g_via_ends[0]);
+    g_via.insert(g_via.end(), own.begin(), own.end());
+    g_via.push_back(g_via_ends[1]);
+  }
   const int via = static_cast<int>(g_via.size());
   int set = game::SetGpsRoute(stops, 2, g_via.data(), via);
   if (via) set = set == via ? 2 : -1;
@@ -1728,9 +1734,10 @@ void CloseNative() {
   WheelStop();
 }
 
-// The job the planner started gets the player's points whenever its GPS holds just the one target, the
-// trailer is on (before that the target is the trailer itself) and the truck is still near where the job
-// began: the game takes each point out as it is reached, and far from the start they must not come back.
+// The job the planner started gets the player's points whenever its GPS holds just the one target and
+// the truck is still near where the job began (at once, then: the GPS shows the way to the destination
+// from the start, trailer on or not, and the player looks at it right away; again if the game redoes the
+// GPS on hitching): the game takes each point out as it is reached, and far from the start they must not come back.
 // The first test put nothing in the GPS and left no trace of why, hence the lines in the log.
 void RunJobVia() {
   static int tick = 0, told = 0;
@@ -1759,7 +1766,7 @@ void RunJobVia() {
   int mode = -1;
   uint64_t targets = 0;
   game::NavState(&mode, &targets);
-  const int set = near_start && hitched ? game::ApplyJobWaypoints(g_job_via.data(), static_cast<int>(g_job_via.size())) : 0;
+  const int set = near_start ? game::ApplyJobWaypoints(g_job_via.data(), static_cast<int>(g_job_via.size())) : 0;
   if (set != 0 || told++ % 10 == 0)
     Log("rota personalizada: " + std::string(set == 1 ? "pontos postos no GPS do serviço" : set < 0 ? "NÃO consegui pôr os pontos no GPS" : "esperando") + " (" + std::to_string(g_job_via.size()) +
         " ponto(s), GPS modo " + std::to_string(mode) + " com " + std::to_string(targets) + " alvo(s), reboques " + std::to_string(count) + (hitched ? " engatado" : " solto") +

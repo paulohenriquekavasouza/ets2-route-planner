@@ -668,3 +668,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   tirava, voltando à rota padrão. `MapClickWaypoint` e as funções `MAP_HIT/PICK/DROP/ADD/MOVE` saíram: o plugin só observa a lista do
   widget a cada quadro (`NativeMapSync`) e, quando ela muda, adota como rota, manda ao GPS e refaz a página no mesmo lugar.
   Nomes das cidades: escala 1,3 ficou grande demais com a `normal_o`; agora 0,85 (`kMapNameScale`). NÃO testado em jogo.
+- **Rumo à v3.3, 4ª rodada (2026-10-06).** Mapa aprovado pelo usuário ("está mto bom"). A rota não ia para o serviço por dois motivos
+  vistos no log: (1) escolher a carga depois de personalizar mudava a chave do serviço (empresas) e descartava os pontos: a chave agora
+  é só origem|destino, e `NativeGpsPreview` recompõe `g_via` com as empresas novas em volta dos pontos do jogador; (2) `RunJobVia`
+  esperava o reboque engatado ("GPS modo 1 com 1 alvo(s), reboques 2 solto") e o usuário olha o GPS logo ao iniciar: agora aplica de
+  imediato (3 s depois do início, perto do ponto de partida, GPS com um alvo só) e de novo se o jogo refizer o GPS. NÃO testado em jogo.
