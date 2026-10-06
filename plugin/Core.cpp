@@ -894,7 +894,7 @@ uint64_t g_native_route_until = 0; // tick count when the wait gives up; 0 = not
 float g_native_route_km = 0, g_native_route_min = 0; // what the GPS answered for the route on the map page
 bool g_native_gps = false;  // the GPS waypoints are our preview: cleared when the map page is left
 bool g_native_map_keep_view = false; // the map page is rebuilt after a change to the points: same view
-constexpr float kMapNameScale = 1.3f; // size of the names on the map, times the game's own
+constexpr float kMapNameScale = 0.85f; // size of the names on the map, times the game's own
 bool g_native_map_focus = false; // the two ends of the route are known: the map centres between them
 double g_native_map_center[2] = {}; // world x, z
 std::string g_native_map_note;
@@ -1497,7 +1497,7 @@ void NativeMapPage(NativeUi& ui) {
   ui.Title(g_native_map_note.empty() ? "MAPA DO JOGO" : g_native_map_note, 90, 772, 1260, 30, kNFontBold, kNAmber);
   ui.Node("ui_world_map", " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
-  ui.Title("Clique na estrada: marca um ponto de passagem. Clique num ponto seu: tira ele. (" + OwnViaText(" ponto)", " pontos)"), kX1 + 170, 96, 690, 32, kNFontSmall, kNDim);
+  ui.Title("Clique numa estrada para a rota passar por ali (" + OwnViaText(" ponto)", " pontos)"), kX1 + 170, 96, 690, 32, kNFontSmall, kNDim);
   if (!g_via.empty())
     ui.TextButton("Rota padrão", kX1 + 870, 96, 150, [] {
       g_via.clear();
@@ -1767,20 +1767,25 @@ void RunJobVia() {
   if (set < 0) g_job_via.clear();
 }
 
-// A click on the map itself (not a drag, not a button): the game's map adds a point there or takes out
-// the one under the pointer; its list becomes the route, the GPS computes it and the page comes back
-// (title, counter) looking at the same place.
-void NativeMapClick() {
-  const int did = game::MapClickWaypoint(g_native_window, 100000);
-  Log(std::string("mapa: clique: ") + (did == 1 ? "ponto adicionado" : did == 2 ? "ponto removido" : did == 0 ? "nada ali (ou sem espaço)" : "NÃO foi possível"));
+// The game's map widget takes clicks by itself: a click on a road adds a point to its list (and to the
+// GPS), as on the game's own map screen. (Doing it for the widget as well, as the first attempts did,
+// took the new point straight out again.) So the list is only watched: when it is not the route we know,
+// it becomes the route, the GPS computes it and the page comes back (title, counter) looking at the same place.
+void NativeMapSync() {
   game::NavNode now[game::kMaxVia];
-  const int count = did > 0 ? game::MapWaypoints(g_native_window, 100000, now) : -1;
-  if (count < 0) return;
+  const int count = game::MapWaypoints(g_native_window, 100000, now);
+  if (count < 0 || !g_via_ends_ok) return;
+  const game::NavNode* const known = g_via.empty() ? g_via_ends : g_via.data();
+  const int known_count = g_via.empty() ? 2 : static_cast<int>(g_via.size());
+  bool same = count == known_count;
+  for (int i = 0; same && i < count; ++i) same = SameNode(now[i], known[i]);
+  if (same) return;
   int ends = 0;
   for (int i = 0; i < count; ++i) ends += SameNode(now[i], g_via_ends[0]) || SameNode(now[i], g_via_ends[1]);
-  if (!g_via_ends_ok || ends == 2) g_via.assign(now, now + count);
-  else Log("mapa: a origem e o destino não saem da rota; clique desfeito"); // the page is rebuilt from the route of before
-  if (g_via_ends_ok && g_via.size() <= 2) g_via.clear(); // only the two companies: the default route
+  if (g_via.empty() && count == 2 && ends == 2) return; // the default route, whatever the order
+  if (ends == 2) g_via.assign(now, now + count);
+  Log("mapa: a lista do mapa mudou (" + std::to_string(count) + " nós)" + (ends == 2 ? "" : "; a origem e o destino não saem da rota, desfeito")); // the page is rebuilt from the route of before
+  if (g_via.size() <= 2) g_via.clear(); // only the two companies: the default route
   g_native_map_keep_view = game::MapViewCenter(g_native_window, 100000, g_native_map_center);
   if (g_native_map_keep_view) g_native_map_focus = true;
   NativeGpsPreview(true);
@@ -1828,11 +1833,6 @@ void NativeExperiment() {
     const bool ours = pid == GetCurrentProcessId();
     const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     const bool released = was_down && !down, esc_pressed = g_esc.exchange(false);
-    static POINT pressed_at;
-    POINT pointer{};
-    GetCursorPos(&pointer);
-    if (down && !was_down) pressed_at = pointer;
-    const bool still = std::abs(pointer.x - pressed_at.x) <= 4 && std::abs(pointer.y - pressed_at.y) <= 4; // a click, not a drag of the map
     was_down = down;
     const int wheel = ours ? g_wheel.exchange(0) : (g_wheel = 0, 0); // down = next page
     const int turned = std::clamp(g_native_list_page + (wheel < 0 ? 1 : wheel > 0 ? -1 : 0), 0, std::max(g_native_pages, 1) - 1);
@@ -1866,10 +1866,9 @@ void NativeExperiment() {
         g_native_leave = g_native_keep = false;
         action();
         if (g_native_leave || (!g_native_keep && !ShowNative())) CloseNative();
-      } else if (g_native_page == NativePage::Map && still && (game::WidgetFlags(g_native_window, 100000) & (1u << 24))) { // the pointer is on the map
-        NativeMapClick();
       }
     }
+    if (g_native_window && g_native_page == NativePage::Map && g_native_gps && !g_native_route_until && !down) NativeMapSync();
   } else {
     was_down = false;
     g_esc = false;

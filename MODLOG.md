@@ -663,3 +663,8 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     fonte na string em `+0x230` e a escala em `+0x250` (1.0). Widget novo tem "map" (fonte inexistente → letra de reserva, sem contorno);
     as telas do jogo põem "normal_o" (a contornada: efeito `ui.font.msdf.outline`) com `0xf4a40(string, 0, {texto, 0, tamanho}*)`.
     `game::SetMapNames` faz o mesmo e põe a escala em 1,3 (`kMapNameScale`). Fontes do jogo extraídas em `C:\Users\Paulo\ets2-font`.
+- **Rumo à v3.3, 3ª rodada (2026-10-06).** Log do teste: todo clique dava "ponto removido". O `ui_world_map` trata o clique sozinho
+  (o "select" do ponteiro) e adiciona o ponto à lista dele e ao GPS; o plugin, um quadro depois, achava esse ponto sob o cursor e o
+  tirava, voltando à rota padrão. `MapClickWaypoint` e as funções `MAP_HIT/PICK/DROP/ADD/MOVE` saíram: o plugin só observa a lista do
+  widget a cada quadro (`NativeMapSync`) e, quando ela muda, adota como rota, manda ao GPS e refaz a página no mesmo lugar.
+  Nomes das cidades: escala 1,3 ficou grande demais com a `normal_o`; agora 0,85 (`kMapNameScale`). NÃO testado em jogo.

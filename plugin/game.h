@@ -735,47 +735,8 @@ inline int ApplyJobWaypoints(const NavNode* via, int via_count) {
 // last heard of, because without it most clicks found nothing (first test, 2026-10-06).
 // On attaching the navigation the widget takes the GPS's waypoints into its list: with our route in the
 // GPS the list is origin, destination, and what the player adds goes between them.
-// Returns 1 = added, 2 = removed, 0 = nothing there / no room, -1 = not possible.
-constexpr uintptr_t MAP_HIT = 0x10112a0, MAP_PICK = 0x1012c30, MAP_DROP = 0x1012eb0, MAP_ADD = 0x10130e0, MAP_NODE_BAD = 0x100b8a0, MAP_MOVE = 0x10127e0;
-constexpr Sig kMapViaSigs[] = {
-    {MAP_HIT, {0x48, 0x8b, 0xc4, 0x4c, 0x89, 0x48, 0x20, 0x48, 0x89, 0x50}},  {MAP_PICK, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}},
-    {MAP_DROP, {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x8b, 0x81, 0x38, 0x0d}}, {MAP_ADD, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20}},
-    {MAP_NODE_BAD, {0x48, 0x83, 0xec, 0x28, 0x4c, 0x8b, 0xc1, 0x48, 0x8b, 0x0d}}, {MAP_MOVE, {0x48, 0x8b, 0xc4, 0x56, 0x48, 0x81, 0xec, 0x10, 0x01, 0x00}},
-};
-inline bool MapViaKnown() {
-  for (const Sig& s : kMapViaSigs)
-    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
-  return true;
-}
-inline int MapClickWaypoint(void* window, uint32_t id) {
-  if (!MapViaKnown()) return -1;
-  __try {
-    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
-    if (!map || !Ptr(map, 0xb8)) return -1;
-    if ((*reinterpret_cast<const uint32_t*>(map + 0x8a4) & 3) || *reinterpret_cast<const int64_t*>(map + 0xcf0) != -1) return 0;
-    if (map[0xd4e]) At<void (*)(void*, float, float)>(MAP_MOVE)(map, *reinterpret_cast<const float*>(map + 0xd44), *reinterpret_cast<const float*>(map + 0xd48));
-    uint64_t index = *reinterpret_cast<const uint64_t*>(map + 0xd18);
-    if (index == ~0ull) index = *reinterpret_cast<const uint64_t*>(map + 0xd10);
-    NavNode node{2, 0, 2, 0};
-    uint32_t kind = 0;
-    if (At<bool (*)(void*, uint64_t*, NavNode*, uint32_t*)>(MAP_HIT)(map, &index, &node, &kind)) {
-      if (kind != 1) return 0; // 2 = a place to avoid: we make none
-      At<void (*)(void*, uint64_t, NavNode*, uint32_t)>(MAP_PICK)(map, index, &node, kind);
-      At<void (*)(void*)>(MAP_DROP)(map);
-      return 2;
-    }
-    const uint64_t count = *reinterpret_cast<const uint64_t*>(map + 0x8d0);
-    if (static_cast<uint32_t>(node.kind) == 2 || At<bool (*)(NavNode*)>(MAP_NODE_BAD)(&node) || count >= kMaxVia) return 0;
-    if (index > count) index = count; // the game throws on an index past the end
-    const uint8_t avoid = map[0xae8];
-    map[0xae8] = 0;
-    At<void (*)(void*, uint64_t, NavNode*)>(MAP_ADD)(map, index, &node);
-    map[0xae8] = avoid;
-    return 1;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return -1;
-  }
-}
+// The widget does all of this by itself on a click (its own handling of the pointer's "select"), so the
+// plugin only reads the list.
 // The widget's waypoints, in route order. Returns how many (at most kMaxVia), -1 if the widget is not there.
 inline int MapWaypoints(void* window, uint32_t id, NavNode* out) {
   __try {
