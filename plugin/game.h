@@ -428,7 +428,7 @@ inline int OpenGameWindow(void** slot, const char* name, const char* path) {
 //   0x68bb60()                         undoes it
 // They keep counters ([exe+0x36ae718]+0xac0..0xacc), so every pause needs its resume.
 constexpr uintptr_t UI_PAUSE = 0x68ca20, UI_RESUME = 0x68bb60;
-constexpr unsigned char kUiPauseSig[2][10] = {{0x53, 0x57, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x05, 0xaa},
+constexpr unsigned char kUiPauseSig[2][10] = {{0x40, 0x53, 0x57, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x05},
                                               {0x48, 0x89, 0x4c, 0x24, 0x08, 0x53, 0x55, 0x56, 0x57, 0x48}};
 inline bool PauseForUi(bool pause) {
   if (std::memcmp(At<const void*>(UI_PAUSE), kUiPauseSig[0], 10) != 0 || std::memcmp(At<const void*>(UI_RESUME), kUiPauseSig[1], 10) != 0) return false;
