@@ -676,3 +676,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - **v3.3 (2026-10-06): aprovada pelo usuário ("deu boa!").** Rota personalizada no mapa (clique numa estrada), levada ao GPS do
   serviço ao iniciar; nomes das cidades com a fonte contornada do jogo; sem o crash da roda. Último ajuste antes de salvar: os pontos
   entram no GPS ~1 s depois de iniciar (era 3 s; verificação a cada 10 quadros), não testado em jogo.
+- **Rumo à v3.3.1 (2026-10-06): menos piscadas no mapa.** Cada mudança refazia a página duas vezes (ao mandar a rota e quando o GPS
+  respondia), e cada vez o widget de mapa é criado de novo e recarrega. Agora uma vez só, quando o GPS tem a rota: ao abrir o mapa pelo
+  planejador, ao clicar numa estrada e em "Rota padrão" (`g_native_keep` enquanto `g_native_route_until`). NÃO testado em jogo.
+  Ideia para zerar as piscadas, não feita: o mapa numa janela do jogo à parte, que não é refeita (incerto: ordem das janelas e cliques).

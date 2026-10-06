@@ -1238,7 +1238,10 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   // (Opening the game's own map screen instead showed the route too, but left the world black on the way
   // back to the planner: see MODLOG, v3.2.)
   ui.TextButton(g_via.empty() ? "Ver a rota no mapa" : "Ver a rota no mapa (personalizada: " + OwnViaText(" ponto)", " pontos)"), kX1 + kNPad,
-                bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
+                bottom + 50, bw, [] {
+                  NativeGoTo(NativePage::Map);
+                  g_native_keep = g_native_route_until != 0; // the map comes once the GPS has the route: one build, not two
+                });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1509,6 +1512,7 @@ void NativeMapPage(NativeUi& ui) {
       g_via.clear();
       g_native_map_keep_view = false;
       NativeGpsPreview(true);
+      g_native_keep = g_native_route_until != 0;
     });
   for (const int step : {-1, 1})
     ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
@@ -1777,7 +1781,8 @@ void RunJobVia() {
 // The game's map widget takes clicks by itself: a click on a road adds a point to its list (and to the
 // GPS), as on the game's own map screen. (Doing it for the widget as well, as the first attempts did,
 // took the new point straight out again.) So the list is only watched: when it is not the route we know,
-// it becomes the route, the GPS computes it and the page comes back (title, counter) looking at the same place.
+// it becomes the route, the GPS computes it and the page comes back (title, counter) looking at the same place:
+// built once, when the route is there (every build makes the map load again, which is seen as a blink).
 void NativeMapSync() {
   game::NavNode now[game::kMaxVia];
   const int count = game::MapWaypoints(g_native_window, 100000, now);
@@ -1797,7 +1802,7 @@ void NativeMapSync() {
   if (g_native_map_keep_view) g_native_map_focus = true;
   NativeGpsPreview(true);
   g_native_map_keep_view = false;
-  if (!ShowNative()) CloseNative();
+  if (!g_native_route_until && !ShowNative()) CloseNative(); // else the page comes back when the GPS has the route
 }
 
 void NativeExperiment() {
