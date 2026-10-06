@@ -581,3 +581,13 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   `map_real.bin` quando a tela de mapa do jogo (tecla M, janela "world_map" → `ui::portal` id 100000 → janela filha +0x98 → mapa id
   100000) está aberta, `map_ours.bin` quando a nossa página de mapa está. Comparar os dois deve mostrar o que o `world_map_hdl` configura
   (rota do GPS, escala inicial).
+- **Comparação dos dois widgets (2026-10-06, `map_real.bin` × `map_ours.bin`, mesma classe/vtable):** o que a tela de mapa do jogo tem e
+  o nosso não: flags `+0x888` = 0x00685407 (o nosso 0x00481402: faltam os bits 0, 2, 14 e 21), `+0x898` = 0x05840800 (nosso 0),
+  `+0x158`/`+0x168` ponteiros e `+0x170`/`+0x178` = 0x1a4 (o widget de dica, posto por 0x1015140), um array em `+0x408` com 1183 itens
+  (os ícones de empresas/pontos, que o nosso mapa não mostra), um array de 1 item em `+0x538` (+0x540/+0x548 = 1; candidato à rota),
+  `+0x740` ponteiro, `+0x8d0` = 1, `+0x8e8` ponteiro com `+0x8f0` = 2. Ou seja: quem alimenta o mapa (ícones e rota) é o `world_map_hdl`;
+  reproduzir isso no widget solto é um RE grande e incerto. O `+0x888` do nosso nasce 0xFFFFFFFF e vira 0x00481402 depois do 1º zoom.
+- **Decisão técnica:** consertar o caminho da tela de mapa do jogo (que já mostra tudo) em vez de alimentar o widget solto. O mundo preto
+  vinha de reabrir o planejador (e pausar) com a tela do desktop ainda saindo: novo estágio `Closing` espera os 4 contadores de pausa
+  (`game::PauseCounters`) voltarem ao valor de antes do mapa por 250 ms (máx. 5 s) antes de reabrir. Os dois botões ficaram no cartão ROTA:
+  "Ver a rota no mapa do jogo" e "Mapa na janela (experimento)". NÃO testado em jogo.

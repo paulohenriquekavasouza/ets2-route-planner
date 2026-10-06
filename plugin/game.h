@@ -443,6 +443,19 @@ constexpr Sig kPauseSigs[] = {
     {PAUSE_TIMER_A, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}}, {PAUSE_TIMER_B, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
     {PAUSE_MODE, {0x48, 0x89, 0x6c, 0x24, 0x20, 0x56, 0x48, 0x83, 0xec, 0x50}},    {UI_INPUT_REFRESH, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
 };
+// The four pause counters (G+0xac0, +0xac4, +0xac8, +0xacc), to tell when one of the game's own screens
+// has finished closing: they are back to what they were before it opened. False if G is not there.
+inline bool PauseCounters(int32_t out[4]) {
+  __try {
+    const uint8_t* const g = *At<uint8_t**>(GAME_STATE);
+    if (!g) return false;
+    std::memcpy(out, g + 0xac0, 4 * sizeof(int32_t));
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 inline bool PauseForUi(bool pause) {
   for (const Sig& s : kPauseSigs)
     if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;

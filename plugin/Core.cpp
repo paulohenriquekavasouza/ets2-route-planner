@@ -1106,7 +1106,8 @@ const std::string& CityFlag(const std::string& city) {
 // game runs), the map screen is opened once the route is there, and when the player closes it the GPS
 // is cleared and the planner comes back. During a job the game does not let the GPS be changed: the map
 // is opened with the job's own route.
-enum class MapPreview { Off, Routing, Opening, Open };
+enum class MapPreview { Off, Routing, Opening, Open, Closing };
+int32_t g_map_preview_counters[4] = {}; // the game's pause counters before its map screen opened
 MapPreview g_map_preview = MapPreview::Off;
 uint64_t g_map_preview_since = 0; // tick count when the current stage began
 bool g_map_preview_ours = false;  // the GPS waypoints are ours (to be cleared afterwards)
@@ -1148,11 +1149,30 @@ void RunMapPreview() {
   }
   if (g_map_preview == MapPreview::Opening) {
     if (waited < 100) return; // our own screen is gone and the game has run a few frames
+    game::PauseCounters(g_map_preview_counters);
     const bool opened = game::OpenMapScreen();
     Log(std::string("mapa: tela de mapa do jogo ") + (opened ? "pedida" : "NÃO abriu"));
     g_map_preview = opened ? MapPreview::Open : MapPreview::Off;
     g_map_preview_since = GetTickCount64();
     if (!opened && g_map_preview_ours) game::SetGpsRoute(nullptr, 0);
+    return;
+  }
+  if (g_map_preview == MapPreview::Closing) {
+    // The map's window is gone, but the screen is still on its way out (fading, giving the pause back).
+    // Pausing for our planner in the middle of that left the world black: wait until the game's pause
+    // counters are what they were before the map opened, for a quarter of a second, then come back.
+    static uint64_t steady_since = 0;
+    int32_t now[4] = {};
+    const bool steady = game::PauseCounters(now) && std::memcmp(now, g_map_preview_counters, sizeof now) == 0;
+    if (!steady) steady_since = 0;
+    else if (!steady_since) steady_since = GetTickCount64();
+    if ((steady_since && GetTickCount64() - steady_since > 250) || waited > 5000) {
+      const bool ok = steady_since != 0;
+      Log(std::string("mapa: ") + (ok ? "jogo de volta ao normal; planejador reaberto" : "o jogo não voltou ao estado de antes do mapa em 5 s; planejador NÃO reaberto"));
+      if (ok) g_native_toggle = true;
+      steady_since = 0;
+      g_map_preview = MapPreview::Off;
+    }
     return;
   }
   // Open: until the player closes the map (it takes a moment to appear)
@@ -1161,9 +1181,9 @@ void RunMapPreview() {
   if (open) seen = true;
   if ((seen && !open) || (!seen && waited > 5000)) {
     Log(std::string("mapa: ") + (seen ? "tela de mapa fechada" : "a tela de mapa não apareceu em 5 s") + (g_map_preview_ours ? "; GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")" : ""));
-    if (seen) g_native_toggle = true; // back to the planner
+    g_map_preview = seen ? MapPreview::Closing : MapPreview::Off;
+    g_map_preview_since = GetTickCount64();
     seen = false;
-    g_map_preview = MapPreview::Off;
   }
 }
 
@@ -1258,13 +1278,14 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
   // The route on the game's own map screen. (The map page of the first attempts, a map widget inside our
   // window, is not reachable any more: such a widget shows the world but not the GPS route.)
-  // (Opening the game's own map screen, StartMapPreview, shows the route but leaves the world black when the
-  // planner comes back; the user prefers the map inside our window.)
-  ui.TextButton("Ver no mapa (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
+  // Two ways, both experiments: the game's own map screen (draws the GPS route) and a map widget inside our
+  // window (shows the world, but nobody feeds it the route: the map screen's handler class does that).
+  ui.TextButton("Ver a rota no mapa do jogo", kX1 + kNPad, bottom + 88, bw, [on_job = jd.on_job] { StartMapPreview(on_job); });
+  ui.TextButton("Mapa na janela (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
-    ui.Title(std::to_string(out) + " empresas na origem, " + std::to_string(in) + " no destino", kX1, top - 360, w, 26, kNFontSmall, kNDim);
+    ui.Title(std::to_string(out) + " empresas na origem, " + std::to_string(in) + " no destino", kX1, top - 334, w, 24, kNFontSmall, kNDim);
   }
   // ---- cargo ----
   ui.Card("CARGA", kX2, top, w, h);
