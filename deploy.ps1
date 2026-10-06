@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Force (Join-Path $dest 'core') | Out-Null
 $home_ui = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Euro Truck Simulator 2\routeplanner'
 New-Item -ItemType Directory -Force $home_ui | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'ui\planner.sii') $home_ui -Force
-python (Join-Path $PSScriptRoot 'tools\gen_routes.py') $extract (Join-Path $dest 'routes.tsv')
+python (Join-Path $PSScriptRoot 'tools\gen_routes.py') $extract (Join-Path $dest 'routes.tsv') 'C:\Users\Paulo\ets2-ui\mat'  # 3rd: the game's extracted /material/ui (which companies have a logo)
 
 # --- host first (so a new host never meets an old core layout for long): a loaded DLL cannot be
 #     overwritten, but it can be moved within the same volume

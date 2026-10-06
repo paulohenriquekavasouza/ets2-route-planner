@@ -12,7 +12,7 @@
 #include <vector>
 
 struct Named {
-  std::string tok, name, parent; // parent: country of a city, city of a branch
+  std::string tok, name, parent; // parent: country of a city, city of a branch, flag code (iso3) of a country
 };
 
 struct RouteData {
@@ -20,6 +20,8 @@ struct RouteData {
   std::set<std::pair<std::string, std::string>> ships, receives; // (company, cargo)
   std::map<std::string, std::string> cargo_names;
   std::map<std::string, int> cargo_mass; // kg, estimated (see tools/gen_routes.py)
+  std::map<std::string, std::string> cargo_icon; // cargo -> name of its picture in the game's /material/ui/cargo_logo
+  std::set<std::string> logos;                   // companies the game has a logo for (/material/ui/company/small)
 };
 
 struct RouteOption {
@@ -43,14 +45,18 @@ inline bool LoadRoutes(const std::string& path, RouteData& d) {
     const auto f = SplitTabs(line);
     if (f.size() < 3) continue;
     const char k = f[0][0];
-    if (k == 'N') d.countries.push_back({f[1], f[2], ""});
+    if (k == 'N') d.countries.push_back({f[1], f[2], f.size() >= 4 ? f[3] : ""});
     else if (k == 'C' && f.size() >= 4) d.cities.push_back({f[1], f[2], f[3]});
-    else if (k == 'P' && f.size() >= 4) d.branches.push_back({f[1], f[2], f[3]});
+    else if (k == 'P' && f.size() >= 4) {
+      d.branches.push_back({f[1], f[2], f[3]});
+      if (f.size() >= 5 && f[4] == "1") d.logos.insert(f[1]);
+    }
     else if (k == 'O') d.ships.insert({f[1], f[2]});
     else if (k == 'I') d.receives.insert({f[1], f[2]});
     else if (k == 'G') {
       d.cargo_names[f[1]] = f[2];
       if (f.size() >= 4) d.cargo_mass[f[1]] = std::atoi(f[3].c_str());
+      if (f.size() >= 5) d.cargo_icon[f[1]] = f[4];
     }
   }
   auto by_name = [](const Named& a, const Named& b) { return a.name < b.name; };

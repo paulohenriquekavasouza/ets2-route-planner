@@ -1,20 +1,27 @@
 """Build routes.tsv (countries, cities, companies, cargoes) from the user's own extracted ETS2 defs.
 
-Usage: gen_routes.py <extract_root> <out.tsv>
+Usage: gen_routes.py <extract_root> <out.tsv> [<ui_materials_root>]
 <extract_root> holds one folder per archive (def/, dlc_east/, ...), each extracted with scs_extractor.
+<ui_materials_root> (optional) holds the game's extracted /material/ui (flags, cargo_logo, company/small);
+it only tells which companies have a logo, for the screen built with the game's own UI.
 
 Lines (tab-separated):
-  N country_token name
+  N country_token name iso3                  (iso3 = the game's flag: /material/ui/flags/<iso3>.mat)
   C city_token name country_token
-  P company_token company_name city_token     (company present in city)
+  P company_token company_name city_token logo   (company present in city; logo 1 = /material/ui/company/small/<token>.mat exists)
   O company_token cargo_token                (company ships it)
   I company_token cargo_token                (company receives it)
-  G cargo_token name est_mass_kg
+  G cargo_token name est_mass_kg icon        (icon = /material/ui/cargo_logo/<icon>.mat, from the first body type)
 """
 import re, sys
 from pathlib import Path
 
 root, out = Path(sys.argv[1]), Path(sys.argv[2])
+mats = Path(sys.argv[3]) / "material" / "ui" if len(sys.argv) > 3 else None
+logos = {p.stem for p in (mats / "company" / "small").glob("*.mat")} if mats and (mats / "company" / "small").is_dir() else set()
+# the pictures the game ships in /material/ui/cargo_logo that are named after a trailer body type
+ICONS = {"bulk", "chemtank", "container", "curtainside", "dryvan", "dumper", "flatbed", "flatbed_brck", "flatbed_cont", "foodtank", "fueltank", "gastank", "gooseneck",
+         "inloader", "insulated", "livestock", "log", "lowbed", "lowboy", "refrigerated", "silo"}
 defs = [p for p in root.glob("*/**/def") if (p / "city").is_dir() or (p / "company").is_dir() or (p / "cargo").is_dir() or (p / "country").is_dir()]
 
 def read(p): return p.read_text("utf-8", "replace")
@@ -37,14 +44,16 @@ def tr(text, fallback):
     out = loc.get(m.group(1), fallback) if m else (text or fallback)
     return out.replace("\\n", " ").strip()  # some UI strings carry a literal \n
 
-countries, cities, companies, cargo = {}, {}, {}, {}
+countries, cities, companies, cargo, iso, icon = {}, {}, {}, {}, {}, {}
 spec, trailers = {}, []  # cargo -> (body types, unit mass, unit volume); single-trailer (body, volume, payload)
 place, ship, recv = set(), set(), set()
 for d in defs:
     for f in d.glob("country/*.sui"):
         t = read(f)
         m = re.search(r"country\.data\.(\w+)", t)
-        if m: countries[m.group(1)] = tr(field(t, "name_localized"), field(t, "name") or pretty(m.group(1)))
+        if m:
+            countries[m.group(1)] = tr(field(t, "name_localized"), field(t, "name") or pretty(m.group(1)))
+            iso[m.group(1)] = (field(t, "iso_country_code") or "").lower()
     for f in d.glob("city/*.sui"):
         t = read(f)
         m = re.search(r"city\.(\w+)", t)
@@ -66,6 +75,7 @@ for d in defs:
         if m:
             cargo[m.group(1)] = tr(field(t, "name"), pretty(m.group(1)))
             spec[m.group(1)] = (set(fields(t, r"body_types\[\]")), num(t, "mass"), num(t, "volume"))
+            icon[m.group(1)] = next((b for b in fields(t, r"body_types\[\]") if b in ICONS), "trailer_generic")
     for f in d.glob("vehicle/trailer_defs/*.sii"):
         t = read(f)
         if (field(t, "chain_type") or "single") == "single" and field(t, "body_type"):
@@ -78,11 +88,11 @@ def est_mass(c):
     loads = [min(int(tv // vol), int(pl // mass)) * mass for b, tv, pl in trailers if b in bodies and mass > 0 and vol > 0]
     return round(max(loads, default=0) or mass)
 
-lines = [f"N\t{k}\t{v}" for k, v in sorted(countries.items())]
+lines = [f"N\t{k}\t{v}\t{iso.get(k, '')}" for k, v in sorted(countries.items())]
 lines += [f"C\t{k}\t{n}\t{c}" for k, (n, c) in sorted(cities.items()) if c in countries]
-lines += [f"P\t{co}\t{companies.get(co, co.upper())}\t{ci}" for co, ci in sorted(place) if ci in cities]
+lines += [f"P\t{co}\t{companies.get(co, co.upper())}\t{ci}\t{int(co in logos)}" for co, ci in sorted(place) if ci in cities]
 lines += [f"O\t{co}\t{cg}" for co, cg in sorted(ship) if cg in cargo]
 lines += [f"I\t{co}\t{cg}" for co, cg in sorted(recv) if cg in cargo]
-lines += [f"G\t{k}\t{v}\t{est_mass(k)}" for k, v in sorted(cargo.items())]
+lines += [f"G\t{k}\t{v}\t{est_mass(k)}\t{icon.get(k, 'trailer_generic')}" for k, v in sorted(cargo.items())]
 out.write_text("\n".join(lines) + "\n", "utf-8")
 print(f"{len(countries)} países, {len(cities)} cidades, {len(place)} filiais, {len(cargo)} cargas -> {out}")

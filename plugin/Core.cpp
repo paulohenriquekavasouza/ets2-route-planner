@@ -11,6 +11,7 @@
 #include "core_api.h"
 
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -841,13 +842,18 @@ void RunPending() {
 // EXPERIMENT (Home): the planner as a screen of the game's own UI. F8 stays the ImGui planner.
 //
 // The game builds its screens from SiiNunit scripts (game.h, OpenGameWindow). Ours is generated here,
-// laid out like the game's F1 screen: a full panel, a title row, tabs, cards with a bold heading and
-// the game's own buttons. A window of ours has no handler class, so:
+// laid out like the game's F1 screen: a full panel, a title row, tabs, cards with a bold heading. It
+// uses the game's own pictures: flags (/material/ui/flags/<iso3>), the trailer picture of a cargo
+// (/material/ui/cargo_logo/<body>) and company logos (/material/ui/company/small/<company>).
+// A window of ours has no handler class, so:
 //   - content changes by writing a new script and opening it again (the game stays paused meanwhile);
 //   - a click is the left mouse button released while one of our buttons has the pointer over it
 //     (bit 24 of the widget's flags);
-//   - there is no text box or scrolling list: long choices (countries, cities, cargo) are pages of buttons.
-// The key comes from the host (SPF swallows Home before Windows' key state sees it).
+//   - there is no text box or scrolling list: a place is picked on one page (countries on the left,
+//     the cities of the chosen one on the right) and cargo through an index of initials.
+// Every button is a plain ui::button with its own faces (normal / pointer over it / pressed), which is
+// what lets a selected one be gold. Colours are the game's AABBGGRR.
+// The key comes from the host (SPF swallows Home before Windows' key state sees it); Esc closes.
 // ponytail: the game keeps every script it has loaded, so each rebuild leaves a few KB behind until the
 // game closes. If that ever matters: change widgets in place (needs the game's "set text" call).
 // =================================================================================================
@@ -855,18 +861,68 @@ void* g_native_window = nullptr;
 bool g_native_paused = false; // we paused the game for the window (its cursor only exists while paused)
 std::atomic<bool> g_native_toggle{false};
 
-enum class NativePage { Planner, Favorites, Country, City, Cargo };
+enum class NativePage { Planner, Favorites, Place, Cargo };
 NativePage g_native_page = NativePage::Planner;
-bool g_native_src = true;   // which side the country / city pages fill
-int g_native_list_page = 0; // page of a paged list
-bool g_native_leave = false; // the action just run needs the game running: close instead of rebuilding
+bool g_native_src = true;     // which side the place page fills
+int g_native_list_page = 0;   // page of a paged list
+char g_native_letter = 0;     // cargo page: initial shown (0 = all)
+bool g_native_leave = false;  // the action just run needs the game running: close instead of rebuilding
 std::vector<std::pair<uint32_t, std::function<void()>>> g_native_buttons; // id -> action, for the window that is open
+
+constexpr const char* kNBtn = "FF483E34";       // the grey-blue of the game's buttons
+constexpr const char* kNBtnHover = "FF6B5B4A";
+constexpr const char* kNBtnDown = "FF362E26";
+constexpr const char* kNGold = "FF0D7FB2";      // the selected tab of the F1 screen
+constexpr const char* kNGoldHover = "FF1A96CE";
+constexpr const char* kNGoldDown = "FF0A6690";
+constexpr const char* kNRow = "14FFFFFF";       // a quiet list row
+constexpr const char* kNRowHover = "30FFFFFF";
+constexpr const char* kNWhite = "@@clr_white@@";
+constexpr const char* kNDim = "@@clr_txt_d@@";
+constexpr const char* kNAmber = "@@clr_sel@@";
+constexpr const char* kNFont = "/font/normal.font";
+constexpr const char* kNFontSmall = "/font/small.font";
+constexpr const char* kNFontBold = "/font/big_bold.font";
 
 std::string SiiString(const std::string& s) {
   std::string out;
   for (const char ch : s) {
     if (ch == '"' || ch == '\\') out += '\\';
-    out += ch;
+    if (ch != '<' && ch != '>') out += ch; // would be read as markup
+  }
+  return out;
+}
+
+// ---- the game's text markup, one layer at a time (layers are separated by <ret>) ----
+std::string At(int x, int y) { return "<offset hshift=" + std::to_string(x) + " vshift=" + std::to_string(y) + ">"; }
+std::string Styled(const std::string& text, const char* font, const char* color) {
+  return std::string("<color value=") + color + "><font face=" + font + ">" + SiiString(text) + "</font>";
+}
+std::string Centered(const std::string& text, const char* font = kNFontBold, const char* color = kNWhite) {
+  return "<align hstyle=center vstyle=center>" + Styled(text, font, color) + "</align>";
+}
+std::string LeftText(const std::string& text, int indent, const char* font = kNFont, const char* color = kNWhite) {
+  return "<align vstyle=center>" + At(indent, 0) + Styled(text, font, color) + "</align>";
+}
+std::string RightText(const std::string& text, const char* font = kNFontSmall, const char* color = kNDim) {
+  return "<align hstyle=right vstyle=center>" + Styled(text + "  ", font, color) + "</align>";
+}
+std::string Fill(const char* color) { return std::string("<img src=/material/ui/white.mat color=") + color + " xscale=stretch yscale=stretch>"; }
+// The flag textures are 64x64 with the flag in the middle: the crop the game itself uses.
+std::string Flag(const std::string& iso, int w, int h) {
+  return iso.empty() ? std::string() : "<img src=/material/ui/flags/" + iso + ".mat left=p2 right=p62 top=p12 bottom=p52 width=" + std::to_string(w) + " height=" + std::to_string(h) + ">";
+}
+std::string CargoIcon(const std::string& cargo, int size, const char* color = "@@clr_cargo_logo@@") {
+  const auto it = g_data.cargo_icon.find(cargo);
+  return "<img src=/material/ui/cargo_logo/" + (it == g_data.cargo_icon.end() ? std::string("trailer_generic") : it->second) + ".mat width=" + std::to_string(size) +
+         " height=" + std::to_string(size) + " color=" + color + ">";
+}
+std::string Layers(std::initializer_list<std::string> parts) {
+  std::string out;
+  for (const auto& p : parts) {
+    if (p.empty()) continue;
+    if (!out.empty()) out += "<ret>";
+    out += p;
   }
   return out;
 }
@@ -889,7 +945,7 @@ struct NativeUi {
   std::vector<std::string> names;
   uint32_t next_id = 1000;
 
-  std::string Node(const char* kind, const std::string& body, int x, int y, int w, int h, uint32_t id, int layer) {
+  void Node(const char* kind, const std::string& body, int x, int y, int w, int h, uint32_t id, int layer) {
     const std::string name = unit + ".n" + std::to_string(names.size());
     char tail[320];
     std::snprintf(tail, sizeof tail,
@@ -897,41 +953,32 @@ struct NativeUi {
                   x + w, y, y - h, id, layer);
     kids += std::string(kind) + " : " + name + " {\n" + body + tail + " my_parent: " + group + "\n}\n\n";
     names.push_back(name);
-    return name;
   }
-  // look = one of the game's text templates (txt.normal.left, txt.emph.left, txt.big.center, ...)
-  void Text(const char* look, const std::string& text, int x, int y, int w, int h = 28, int layer = 5) {
-    Node("ui::text_common", " value: \"" + SiiString(text) + "\"\n look_template: " + look + "\n text: \"\"\n", x, y, w, h, 0, layer);
-  }
-  // a flat coloured block (alpha first), like the cards of the F1 screen
-  void Block(const char* color, int x, int y, int w, int h, int layer = 2) {
-    Node("ui::text_common", std::string(" value: ") + color + "\n look_template: txt.background.flat\n text: \"\"\n", x, y, w, h, 0, layer);
-  }
+  // anything drawn that is not a button: `markup` is the game's text markup
+  void Draw(const std::string& markup, int x, int y, int w, int h, int layer = 5) { Node("ui::text", " text: \"" + markup + "\"\n", x, y, w, h, 0, layer); }
+  void Label(const std::string& text, int x, int y, int w, int h = 28, const char* font = kNFont, const char* color = kNWhite) { Draw(LeftText(text, 0, font, color), x, y, w, h); }
+  void Title(const std::string& text, int x, int y, int w, int h = 28, const char* font = kNFont, const char* color = kNWhite) { Draw(Centered(text, font, color), x, y, w, h); }
+  // a card of the F1 screen: a slightly lighter block with a bold heading
   void Card(const std::string& heading, int x, int y, int w, int h) {
-    Block("18FFFFFF", x, y, w, h);
-    Text("txt.big.bold.white.center", heading, x, y - 10, w, 30);
+    Draw(Fill("16FFFFFF"), x, y, w, h, 2);
+    Title(heading, x, y - 12, w, 30, kNFontBold);
   }
-  // The game's normal button (30 high), or its tab button tinted with the selection colour (42 high)
-  // for the main action, the selected tab and options that are on.
-  void Button(const std::string& text, int x, int y, int w, std::function<void()> action, bool accent = false) {
-    std::string looks = " n_pml: \"\"\n s_pml: \"\"\n s2_pml: \"\"\n d_pml: \"\"\n p_pml: \"\"\n";
-    if (accent) {
-      const std::string face =
-          "<img src=/material/ui/button/btn_tab.mat right=p4><img src=/material/ui/button/btn_tab.mat width=-4 left=p4 right=p4><img src=/material/ui/button/btn_tab.mat left=p4 "
-          "right=p0><ret><align vstyle=center hstyle=center><font face=/font/big_bold.font><color value=@@clr_white@@>" +
-          SiiString(text) + "</font></align>";
-      const std::string on = "<color value=@@clr_sel@@>" + face;
-      looks = " n_pml: \"" + on + "\"\n s_pml: \"" + on + "\"\n s2_pml: \"\"\n d_pml: \"" + on + "\"\n p_pml: \"" + on + "\"\n";
-    }
+  // `content` goes over the button's own colour; `selected` makes it gold; `row` is the quiet look of a list line
+  void Button(const std::string& content, int x, int y, int w, int h, std::function<void()> action, bool selected = false, bool row = false) {
+    const char* n = selected ? kNGold : row ? kNRow : kNBtn;
+    const char* s = selected ? kNGoldHover : row ? kNRowHover : kNBtnHover;
+    const char* p = selected ? kNGoldDown : kNBtnDown;
+    const std::string body = " n_pml: \"" + Fill(n) + "<ret>" + content + "\"\n s_pml: \"" + Fill(s) + "<ret>" + content + "\"\n s2_pml: \"" + Fill(s) + "<ret>" + content +
+                             "\"\n d_pml: \"" + Fill(n) + "<ret>" + content + "\"\n p_pml: \"" + Fill(p) + "<ret>" + content + "\"\n button_type: normal\n";
     const uint32_t id = next_id++;
-    Node("ui::button_common",
-         " value: \"" + SiiString(text) + "\"\n value2: \"\"\n look_template: " + (accent ? "btn.tab" : "btn.normal") + "\n" + looks + " button_type: normal\n", x, y, w,
-         accent ? 42 : 30, id, 6);
+    Node("ui::button", body, x, y, w, h, id, 6);
     g_native_buttons.emplace_back(id, std::move(action));
   }
-  // an option that is on or off: accent look when on
+  void TextButton(const std::string& text, int x, int y, int w, std::function<void()> action, bool selected = false, int h = 32) {
+    Button(Centered(text), x, y, w, h, std::move(action), selected);
+  }
   void Toggle(const std::string& text, int x, int y, int w, bool* value) {
-    Button(text, x, *value ? y + 6 : y, w, [value] { *value = !*value; }, *value);
+    TextButton(text, x, y, w, [value] { *value = !*value; }, *value);
   }
 
   std::string Script() const {
@@ -949,7 +996,7 @@ struct NativeUi {
 // ---- what the pages need from the planner ----
 // The cargo options for the chosen cities, as the F8 planner computes them. Returns a note when there is nothing to list.
 const char* NativeCargoOptions() {
-  if (g_src.city.empty() || g_dst.city.empty()) return "Escolha origem e destino.";
+  if (g_src.city.empty() || g_dst.city.empty()) return "Escolha a origem e o destino";
   const std::string key = g_src.city + "|" + g_dst.city + (g_any_cargo ? "|any" : "");
   if (key != g_options_for) {
     g_options = RouteOptions(g_data, g_src.city, g_dst.city, g_any_cargo);
@@ -958,7 +1005,7 @@ const char* NativeCargoOptions() {
     g_cargo_pending = g_supported && !g_options.empty();
   }
   if (g_cargo_pending) FilterUnknownCargo(); // asks the game which cargo it knows
-  if (g_options.empty()) return g_any_cargo ? "Uma das cidades não tem empresas." : "Nenhuma carga liga empresas dessas cidades. Ligue \"Qualquer carga\".";
+  if (g_options.empty()) return g_any_cargo ? "Uma das cidades não tem empresas" : "Nenhuma carga liga essas cidades: ligue \"Qualquer carga\"";
   return nullptr;
 }
 
@@ -969,17 +1016,41 @@ std::string Shorten(const std::string& s, size_t max) { // ponytail: counts byte
   return s.substr(0, cut) + "..";
 }
 
-// Buttons for a paged grid: `count` items, `cols` x `rows` per page, each made by `item(index, x, y, w)`.
-void NativeGrid(NativeUi& ui, int count, int cols, int rows, int row_h, const std::function<void(int, int, int, int)>& item) {
-  const int per_page = cols * rows, pages = std::max(1, (count + per_page - 1) / per_page);
-  g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
-  const int left = 110, width = 1220, gap = 8, w = (width - gap * (cols - 1)) / cols, top = 730;
-  for (int i = g_native_list_page * per_page, n = 0; i < count && n < per_page; ++i, ++n) item(i, left + (n % cols) * (w + gap), top - (n / cols) * row_h, w);
-  if (pages > 1) {
-    if (g_native_list_page > 0) ui.Button("< Anterior", 430, 150, 180, [] { --g_native_list_page; });
-    ui.Text("txt.normal.center", "Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 620, 150, 200, 30);
-    if (g_native_list_page < pages - 1) ui.Button("Próxima >", 830, 150, 180, [] { ++g_native_list_page; });
-  }
+// The initial of a name for the index, without its accent ("Óleo" -> 'O'); 0 for anything else.
+char Initial(const std::string& s) {
+  if (s.empty()) return 0;
+  const unsigned char a = static_cast<unsigned char>(s[0]);
+  if (a < 0x80) return std::isalpha(a) ? static_cast<char>(std::toupper(a)) : 0;
+  if (a != 0xC3 || s.size() < 2) return 0;
+  const unsigned char b = static_cast<unsigned char>(s[1]) & 0xDF; // upper case
+  if (b >= 0x80 && b <= 0x85) return 'A';
+  if (b == 0x87) return 'C';
+  if (b >= 0x88 && b <= 0x8B) return 'E';
+  if (b >= 0x8C && b <= 0x8F) return 'I';
+  if (b >= 0x92 && b <= 0x96) return 'O';
+  if (b >= 0x99 && b <= 0x9C) return 'U';
+  return 0;
+}
+
+std::string Tonnes(const std::string& cargo) {
+  char mass[24];
+  std::snprintf(mass, sizeof mass, "%.0f t", CargoMass(g_data, cargo) / 1000.0);
+  return mass;
+}
+std::string Thousands(long long n) { // 12345 -> "12.345"
+  std::string s = std::to_string(n);
+  for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(i, ".");
+  return s;
+}
+const std::string& CountryFlag(const std::string& country) {
+  static const std::string none;
+  const Named* c = Find(g_data.countries, country);
+  return c ? c->parent : none;
+}
+const std::string& CityFlag(const std::string& city) {
+  static const std::string none;
+  const Named* c = Find(g_data.cities, city);
+  return c ? CountryFlag(c->parent) : none;
 }
 
 void NativeGoTo(NativePage page) {
@@ -987,88 +1058,143 @@ void NativeGoTo(NativePage page) {
   g_native_list_page = 0;
 }
 
+// "< Anterior   Página 2 de 5   Próxima >" on the bottom row, to the right
+void NativePager(NativeUi& ui, int pages) {
+  if (pages < 2) return;
+  if (g_native_list_page > 0) ui.TextButton("< Anterior", 930, 96, 130, [] { --g_native_list_page; });
+  ui.Title("Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 1065, 96, 150, 32);
+  if (g_native_list_page < pages - 1) ui.TextButton("Próxima >", 1220, 96, 130, [] { ++g_native_list_page; });
+}
+
 // ---- pages ----
+constexpr int kCardTop = 760, kCardH = 452, kCardW = 410, kX1 = 90, kX2 = 515, kX3 = 940, kNPad = 22;
+
+// A company line: "DE" / "PARA", its logo when the game has one, and its name.
+void NativeCompany(NativeUi& ui, const char* label, const std::string& company, const std::string& name, int x, int y, int w) {
+  ui.Label(label, x, y, 50, 30, kNFontSmall, kNAmber);
+  const bool logo = g_data.logos.count(company) != 0;
+  if (logo) ui.Draw(At(0, 0) + "<img src=/material/ui/company/small/" + company + ".mat width=116 height=29>", x + 52, y, 116, 30);
+  ui.Label(Shorten(name, logo ? 22 : 34), x + (logo ? 178 : 52), y, w - (logo ? 178 : 52), 30);
+}
+
+// The place (flag, city, country) of one end of the route, as one big button that opens the place page.
+void NativePlaceButton(NativeUi& ui, const char* label, Side& side, bool src, int x, int y, int w) {
+  ui.Label(label, x, y, w, 24, kNFontSmall, kNAmber);
+  const Named* country = Find(g_data.countries, side.country);
+  const std::string city = CityLabel(side.city);
+  const std::string content =
+      city.empty() ? Layers({country ? At(14, 14) + Flag(country->parent, 45, 30) : std::string(), LeftText(country ? "Escolher a cidade" : "Escolher o local", country ? 74 : 18, kNFontBold)})
+                   : Layers({At(14, 14) + Flag(CityFlag(side.city), 45, 30), At(74, 6) + Styled(Shorten(city, 24), kNFontBold, kNWhite),
+                             At(74, 32) + Styled(country ? country->name : std::string(), kNFontSmall, kNDim), RightText("trocar")});
+  ui.Button(content, x, y - 26, w, 58, [src] {
+    g_native_src = src;
+    NativeGoTo(NativePage::Place);
+  });
+}
+
 void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
-  const int top = 750, h = 400, w = 400, x1 = 110, x2 = 520, x3 = 930, pad = 30, bw = w - 2 * pad;
-  // current job
-  ui.Card("SERVIÇO ATUAL", x1, top, w, h);
+  const int top = kCardTop, h = kCardH, w = kCardW, bw = w - 2 * kNPad, bottom = top - h;
+  // ---- route ----
+  ui.Card("ROTA", kX1, top, w, h);
+  NativePlaceButton(ui, "ORIGEM", g_src, true, kX1 + kNPad, top - 56, bw);
+  ui.TextButton("Usar a cidade atual", kX1 + kNPad, top - 148, bw, [] { PickCurrentCity(); });
+  NativePlaceButton(ui, "DESTINO", g_dst, false, kX1 + kNPad, top - 206, bw);
+  ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
+  if (!g_src.city.empty() && !g_dst.city.empty()) {
+    const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
+    const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
+    ui.Title(std::to_string(out) + " empresas na origem, " + std::to_string(in) + " no destino", kX1, top - 360, w, 26, kNFontSmall, kNDim);
+  }
+  // ---- cargo ----
+  ui.Card("CARGA", kX2, top, w, h);
+  const char* note = NativeCargoOptions();
+  if (CargoPicked()) {
+    const RouteOption o = g_options[g_selected];
+    ui.Draw("<align hstyle=center vstyle=center>" + CargoIcon(o.cargo, 56) + "</align>", kX2, top - 50, w, 60);
+    ui.Title(Shorten(CargoName(g_data, o.cargo), 34), kX2, top - 112, w, 30, kNFontBold, kNAmber);
+    ui.Title("~" + Tonnes(o.cargo) + (o.off_market ? "  -  fora do mercado dessas empresas" : ""), kX2, top - 140, w, 24, kNFontSmall, kNDim);
+    NativeCompany(ui, "DE", o.src_company, o.src_name, kX2 + kNPad, top - 178, bw);
+    NativeCompany(ui, "PARA", o.dst_company, o.dst_name, kX2 + kNPad, top - 214, bw);
+    const double km = g_supported ? game::FreightKm(Token(o.src_company.c_str()), Token(g_src.city.c_str()), Token(o.dst_company.c_str()), Token(g_dst.city.c_str())) : -1;
+    if (km > 0) {
+      ui.Label("Distância estimada", kX2 + kNPad, top - 258, 200, 26, kNFont, kNDim);
+      ui.Draw(RightText(Thousands(static_cast<long long>(km)) + " km", kNFont, kNWhite), kX2 + kNPad, top - 258, bw, 26);
+      ui.Label("Pagamento estimado", kX2 + kNPad, top - 284, 200, 26, kNFont, kNDim);
+      ui.Draw(RightText("EUR " + Thousands(static_cast<long long>(600 + km * 15 * 0.9)), kNFont, kNAmber), kX2 + kNPad, top - 284, bw, 26);
+    }
+    int same = 0;
+    for (const auto& other : g_options) same += other.cargo == o.cargo;
+    if (same > 1)
+      ui.TextButton("Outras empresas (" + std::to_string(same) + ")", kX2 + kNPad, bottom + 126, bw, [cargo = o.cargo] {
+        for (int n = 1; n <= static_cast<int>(g_options.size()); ++n) { // the next pair of companies carrying the same cargo
+          const int i = (g_selected + n) % static_cast<int>(g_options.size());
+          if (g_options[i].cargo == cargo) {
+            g_selected = i;
+            break;
+          }
+        }
+      });
+  } else {
+    ui.Draw("<align hstyle=center vstyle=center>" + std::string("<img src=/material/ui/cargo_logo/trailer_generic.mat width=56 height=56 color=40FFFFFF>") + "</align>", kX2, top - 150, w, 60);
+    ui.Title(note ? note : "Nenhuma carga escolhida", kX2, top - 226, w, 28, kNFont, kNDim);
+  }
+  if (!note) ui.TextButton(CargoPicked() ? "Trocar a carga" : "Escolher a carga", kX2 + kNPad, bottom + 88, bw, [] { NativeGoTo(NativePage::Cargo); }, !CargoPicked());
+  ui.Toggle("Qualquer carga", kX2 + kNPad, bottom + 50, bw, &g_any_cargo);
+  // ---- current job ----
+  ui.Card("SERVIÇO ATUAL", kX3, top, w, h);
   if (!jd.on_job) {
-    ui.Text("txt.normal.center", "Nenhuma entrega em andamento", x1, top - 190, w);
+    ui.Draw("<align hstyle=center vstyle=center><img src=/material/ui/cargo_logo/all.mat width=56 height=56 color=40FFFFFF></align>", kX3, top - 150, w, 60);
+    ui.Title("Nenhuma entrega em andamento", kX3, top - 226, w, 28, kNFont, kNDim);
     g_confirm_cancel = false;
   } else {
     SPF_JobConstants jc{};
     g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
     char line[256];
-    std::snprintf(line, sizeof line, "%s  (%.1f t)", jc.cargo_name, jc.cargo_mass / 1000.0f);
-    ui.Text("txt.emph.left", Shorten(line, 44), x1 + pad, top - 60, bw);
-    ui.Text("txt.normal.left", Shorten(std::string("De: ") + jc.source_company + ", " + jc.source_city, 44), x1 + pad, top - 92, bw);
-    ui.Text("txt.normal.left", Shorten(std::string("Para: ") + jc.destination_company + ", " + jc.destination_city, 44), x1 + pad, top - 120, bw);
-    std::snprintf(line, sizeof line, "%u km  -  prazo em %uh%02u", jc.planned_distance_km, jd.remaining_delivery_minutes / 60, jd.remaining_delivery_minutes % 60);
-    ui.Text("txt.normal.left", line, x1 + pad, top - 148, bw);
+    ui.Draw("<align hstyle=center vstyle=center>" + CargoIcon(jc.cargo_id, 56) + "</align>", kX3, top - 50, w, 60);
+    ui.Title(Shorten(jc.cargo_name, 34), kX3, top - 112, w, 30, kNFontBold, kNAmber);
+    std::snprintf(line, sizeof line, "%.1f t", jc.cargo_mass / 1000.0f);
+    ui.Title(line, kX3, top - 140, w, 24, kNFontSmall, kNDim);
+    ui.Label("DE", kX3 + kNPad, top - 178, 50, 30, kNFontSmall, kNAmber);
+    ui.Draw(Layers({At(0, 5) + Flag(CityFlag(jc.source_city_id), 30, 20), LeftText(Shorten(std::string(jc.source_city) + "  -  " + jc.source_company, 34), 40)}), kX3 + kNPad + 52, top - 178, bw - 52, 30);
+    ui.Label("PARA", kX3 + kNPad, top - 214, 50, 30, kNFontSmall, kNAmber);
+    ui.Draw(Layers({At(0, 5) + Flag(CityFlag(jc.destination_city_id), 30, 20), LeftText(Shorten(std::string(jc.destination_city) + "  -  " + jc.destination_company, 34), 40)}), kX3 + kNPad + 52, top - 214, bw - 52,
+            30);
+    ui.Label("Distância", kX3 + kNPad, top - 258, 200, 26, kNFont, kNDim);
+    ui.Draw(RightText(Thousands(jc.planned_distance_km) + " km", kNFont, kNWhite), kX3 + kNPad, top - 258, bw, 26);
+    ui.Label("Prazo", kX3 + kNPad, top - 284, 200, 26, kNFont, kNDim);
+    std::snprintf(line, sizeof line, "%uh%02u", jd.remaining_delivery_minutes / 60, jd.remaining_delivery_minutes % 60);
+    ui.Draw(RightText(line, kNFont, kNWhite), kX3 + kNPad, top - 284, bw, 26);
+    ui.Label("Pagamento", kX3 + kNPad, top - 310, 200, 26, kNFont, kNDim);
+    ui.Draw(RightText("EUR " + Thousands(static_cast<long long>(jc.income)), kNFont, kNAmber), kX3 + kNPad, top - 310, bw, 26);
     if (!g_confirm_cancel) {
-      ui.Button("Ir até a carga (teleporte)", x1 + pad, top - h + 100, bw, [] {
+      ui.TextButton("Ir até a carga (teleporte)", kX3 + kNPad, bottom + 88, bw, [] {
         g_pending = Pending::Teleport;
         g_native_leave = true;
       });
-      ui.Button("Cancelar serviço", x1 + pad, top - h + 55, bw, [] { g_confirm_cancel = true; });
+      ui.TextButton("Cancelar o serviço", kX3 + kNPad, bottom + 50, bw, [] { g_confirm_cancel = true; });
     } else {
-      ui.Text("txt.emph.left", "Cancelar mesmo? O jogo cobra multa.", x1 + pad, top - h + 140, bw);
-      ui.Button("Sim, cancelar", x1 + pad, top - h + 100, bw, [] {
+      ui.Title("Cancelar mesmo? O jogo cobra multa.", kX3, bottom + 124, w, 26, kNFont, kNAmber);
+      ui.TextButton("Sim, cancelar", kX3 + kNPad, bottom + 88, bw, [] {
         g_pending = Pending::Cancel;
         g_confirm_cancel = false;
         g_native_leave = true;
-      });
-      ui.Button("Não, manter", x1 + pad, top - h + 55, bw, [] { g_confirm_cancel = false; });
+      }, true);
+      ui.TextButton("Não, manter", kX3 + kNPad, bottom + 50, bw, [] { g_confirm_cancel = false; });
     }
   }
-  // route
-  ui.Card("ROTA", x2, top, w, h);
-  const auto side = [&](const char* title, Side& s, bool src, int y) {
-    const Named* country = Find(g_data.countries, s.country);
-    const std::string city = CityLabel(s.city);
-    ui.Text("txt.emph.left", title, x2 + pad, y, bw);
-    ui.Button(Shorten("País: " + (country ? country->name : std::string("todos")), 30), x2 + pad, y - 32, bw, [src] {
-      g_native_src = src;
-      NativeGoTo(NativePage::Country);
-    });
-    ui.Button(Shorten("Cidade: " + (city.empty() ? std::string("escolher") : city), 30), x2 + pad, y - 70, bw, [src] {
-      g_native_src = src;
-      NativeGoTo(NativePage::City);
-    });
-  };
-  side("ORIGEM", g_src, true, top - 55);
-  ui.Button("Usar a cidade atual", x2 + pad, top - 163, bw, [] { PickCurrentCity(); });
-  side("DESTINO", g_dst, false, top - 215);
-  ui.Button("Maior rota possível", x2 + pad, top - 323, bw, [] { PickLongestRoute(); });
-  // cargo
-  ui.Card("CARGA", x3, top, w, h);
-  const char* note = NativeCargoOptions();
-  if (CargoPicked()) {
-    const RouteOption& o = g_options[g_selected];
-    char mass[32];
-    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
-    ui.Text("txt.emph.left", Shorten(CargoName(g_data, o.cargo), 30) + "  (" + mass + ")", x3 + pad, top - 60, bw);
-    ui.Text("txt.normal.left", Shorten("De: " + o.src_name, 44), x3 + pad, top - 92, bw);
-    ui.Text("txt.normal.left", Shorten("Para: " + o.dst_name, 44), x3 + pad, top - 120, bw);
-    if (o.off_market) ui.Text("txt.normal.left", "Fora do mercado dessas empresas", x3 + pad, top - 148, bw);
-  } else {
-    ui.Text("txt.normal.center", note ? "Sem cargas para listar" : "Nenhuma carga escolhida", x3, top - 100, w);
-  }
-  if (note) ui.Text("txt.normal.center", Shorten(note, 52), x3, top - 190, w);
-  else ui.Button("Escolher carga (" + std::to_string(g_options.size()) + ")", x3 + pad, top - h + 145, bw, [] { NativeGoTo(NativePage::Cargo); });
-  ui.Toggle("Qualquer carga", x3 + pad, top - h + 61, bw, &g_any_cargo);
-  // options
-  const int oy = top - h - 10;
-  ui.Card("AO INICIAR O SERVIÇO", x1, oy, 1220, 110);
-  const int ow = 290, ox = x1 + 15;
-  ui.Toggle("Teleportar até a origem", ox, oy - 56, ow, &g_teleport);
-  ui.Toggle("Soltar o freio de mão", ox + 300, oy - 56, ow, &g_release_brake);
-  ui.Toggle("7h e tempo limpo", ox + 600, oy - 56, ow, &g_morning);
-  ui.Toggle("Abastecer", ox + 900, oy - 56, ow, &g_refuel);
-  // actions
+  // ---- options, like the strip at the bottom of the F1 screen ----
+  const int oy = bottom - 12;
+  ui.Card("AO INICIAR O SERVIÇO", kX1, oy, 1260, 96);
+  const int ow = 295, ox = kX1 + 22, step = 307;
+  ui.Toggle("Teleportar até a origem", ox, oy - 50, ow, &g_teleport);
+  ui.Toggle("Soltar o freio de mão", ox + step, oy - 50, ow, &g_release_brake);
+  ui.Toggle("7h e tempo limpo", ox + 2 * step, oy - 50, ow, &g_morning);
+  ui.Toggle("Abastecer o caminhão", ox + 3 * step, oy - 50, ow, &g_refuel);
+  // ---- actions ----
   const bool editing = g_editing >= 0 && g_editing < static_cast<int>(g_favorites.size());
+  const int ay = oy - 96 - 12;
   if (CargoPicked()) {
-    ui.Button(editing ? "Salvar alterações na favorita" : "Salvar como favorita", x1, 176, 330, [editing] {
+    ui.TextButton(editing ? "Salvar alterações na favorita" : "Salvar como favorita", kX1, ay - 5, 300, [editing] {
       if (editing) {
         g_favorites[g_editing] = SelectedRoute();
         SaveFavoritesFile();
@@ -1081,41 +1207,135 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
       }
     });
     if (CanStart(jd.on_job))
-      ui.Button("INICIAR SERVIÇO", 520, 182, 400, [] {
+      ui.TextButton("INICIAR SERVIÇO", 520, ay, 400, [] {
         g_pending = Pending::Start;
         g_native_leave = true;
-      }, true);
+      }, true, 42);
   }
   if (!CargoPicked() || !CanStart(jd.on_job))
-    ui.Text("txt.normal.center", jd.on_job ? "Cancele o serviço atual para iniciar outro." : "Escolha origem, destino e uma carga para iniciar.", 470, 176, 500, 30);
+    ui.Title(jd.on_job ? "Cancele o serviço atual para iniciar outro" : "Escolha a origem, o destino e uma carga para iniciar", 420, ay - 6, 600, 30, kNFont, kNDim);
+}
+
+// One page for a place: every country on the left (with its flag), the cities of the chosen one on the right.
+void NativePlacePage(NativeUi& ui) {
+  Side& side = g_native_src ? g_src : g_dst;
+  ui.Title(g_native_src ? "LOCAL DE ORIGEM" : "LOCAL DE DESTINO", 90, 772, 1260, 30, kNFontBold, kNAmber);
+  const int top = 738, h = 600;
+  ui.Card("PAÍS", kX1, top, 400, h);
+  const int rows = 18, cw = 184;
+  for (int i = 0; i < static_cast<int>(g_data.countries.size()) && i < 2 * rows; ++i) {
+    const Named& c = g_data.countries[i];
+    ui.Button(Layers({At(8, 5) + Flag(c.parent, 27, 18), LeftText(Shorten(c.name, 18), 44)}), kX1 + 12 + (i / rows) * (cw + 8), top - 46 - (i % rows) * 30, cw, 28, [&side, tok = c.tok] {
+      side.country = tok;
+      const Named* city = Find(g_data.cities, side.city);
+      if (city && city->parent != tok) side.city.clear();
+      g_native_list_page = 0;
+    }, side.country == c.tok, true);
+  }
+  const Named* country = Find(g_data.countries, side.country);
+  const int cx = kX1 + 415, cardw = 845;
+  ui.Card(country ? "CIDADES  -  " + country->name : std::string("CIDADES"), cx, top, cardw, h);
+  if (!country) {
+    ui.Title("Escolha um país à esquerda", cx, top - 280, cardw, 30, kNFont, kNDim);
+  } else {
+    ui.Draw(At(0, 0) + Flag(country->parent, 45, 30), cx + 16, top - 8, 45, 30);
+    std::vector<const Named*> cities;
+    for (const auto& c : g_data.cities)
+      if (c.parent == side.country) cities.push_back(&c);
+    const int cols = 4, per_page = cols * rows, pages = std::max(1, (static_cast<int>(cities.size()) + per_page - 1) / per_page), w = 198;
+    g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
+    for (int i = g_native_list_page * per_page, n = 0; i < static_cast<int>(cities.size()) && n < per_page; ++i, ++n) {
+      const Named& c = *cities[i];
+      const int companies = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [&](const Named& b) { return b.parent == c.tok; }));
+      // filled column by column, so the alphabet reads downwards
+      ui.Button(Layers({LeftText(Shorten(c.name, 20), 12), RightText(std::to_string(companies))}), cx + 14 + (n / rows) * (w + 8), top - 46 - (n % rows) * 30, w, 28, [&side, tok = c.tok] {
+        side.city = tok;
+        NativeGoTo(NativePage::Planner);
+      }, side.city == c.tok, true);
+    }
+    ui.Title("O número ao lado de cada cidade é a quantidade de empresas", cx, top - h + 30, cardw, 24, kNFontSmall, kNDim);
+    NativePager(ui, pages);
+  }
+  ui.TextButton("< Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
+  if (g_native_src)
+    ui.TextButton("Usar a cidade atual", kX1 + 172, 96, 228, [] {
+      PickCurrentCity();
+      NativeGoTo(NativePage::Planner);
+    });
+}
+
+// Cargo: an index of initials on the left, the cargo with that initial on the right (each once; the
+// companies are the first pair that trades it, and the planner offers the other pairs).
+void NativeCargoPage(NativeUi& ui) {
+  ui.Title("CARGA  -  " + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city), 90, 772, 1260, 30, kNFontBold, kNAmber);
+  const int top = 738, h = 600;
+  ui.Card("ÍNDICE", kX1, top, 250, h);
+  const char* note = NativeCargoOptions();
+  struct Item {
+    int option;
+    bool off_market;
+  };
+  std::vector<Item> items; // one per cargo, in the options' order (by name)
+  std::set<char> letters;
+  for (int i = 0; i < static_cast<int>(g_options.size()); ++i) {
+    if (i > 0 && g_options[i].cargo == g_options[i - 1].cargo) continue;
+    const char initial = Initial(CargoName(g_data, g_options[i].cargo));
+    letters.insert(initial);
+    if (!g_native_letter || initial == g_native_letter) items.push_back({i, g_options[i].off_market});
+  }
+  ui.TextButton("Todas", kX1 + 20, top - 50, 210, [] {
+    g_native_letter = 0;
+    g_native_list_page = 0;
+  }, g_native_letter == 0);
+  for (char ch = 'A'; ch <= 'Z'; ++ch) {
+    if (!letters.count(ch)) continue; // only the initials there is cargo for
+    const int n = ch - 'A';
+    ui.TextButton(std::string(1, ch), kX1 + 20 + (n % 4) * 54, top - 96 - (n / 4) * 40, 48, [ch] {
+      g_native_letter = ch;
+      g_native_list_page = 0;
+    }, g_native_letter == ch, 34);
+  }
+  ui.Toggle("Qualquer carga", kX1 + 20, top - h + 54, 210, &g_any_cargo);
+  const int cx = kX1 + 265, cardw = 995;
+  ui.Card(std::string("CARGAS") + (g_native_letter ? std::string("  -  ") + g_native_letter : std::string()), cx, top, cardw, h);
+  if (note) {
+    ui.Title(note, cx, top - 280, cardw, 30, kNFont, kNDim);
+  } else {
+    const int cols = 3, rows = 17, per_page = cols * rows, pages = std::max(1, (static_cast<int>(items.size()) + per_page - 1) / per_page), w = 318;
+    g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
+    const std::string chosen = CargoPicked() ? g_options[g_selected].cargo : std::string();
+    for (int i = g_native_list_page * per_page, n = 0; i < static_cast<int>(items.size()) && n < per_page; ++i, ++n) {
+      const RouteOption& o = g_options[items[i].option];
+      ui.Button(Layers({At(8, 3) + CargoIcon(o.cargo, 22), LeftText(Shorten(CargoName(g_data, o.cargo), 28), 40, kNFont, items[i].off_market ? kNDim : kNWhite), RightText(Tonnes(o.cargo))}),
+                cx + 12 + (n / rows) * (w + 8), top - 46 - (n % rows) * 31, w, 28, [option = items[i].option] {
+                  g_selected = option;
+                  NativeGoTo(NativePage::Planner);
+                }, o.cargo == chosen, true);
+    }
+    ui.Title(g_any_cargo ? "Em cinza: cargas que essas empresas não negociam normalmente" : "Só as cargas que as empresas dessas cidades negociam", cx, top - h + 30, cardw, 24, kNFontSmall, kNDim);
+    NativePager(ui, pages);
+  }
+  ui.TextButton("< Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
 }
 
 void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
-  const int x = 110, w = 1220;
-  ui.Card("ROTAS FAVORITAS", x, 750, w, 560);
-  if (jd.on_job)
-    ui.Button("Salvar o serviço atual", x + 30, 700, 300, [] {
-      SPF_JobConstants jc{};
-      g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
-      AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
-    });
-  if (CargoPicked()) ui.Button("Salvar a rota do planejador", x + 340, 700, 330, [] { AddFavorite(SelectedRoute()); });
-  if (g_favorites.empty()) {
-    ui.Text("txt.normal.center", "Nenhuma favorita ainda. Em Planejar, escolha a rota e a carga e salve.", x, 480, w);
-    return;
-  }
-  const int rows = 10, count = static_cast<int>(g_favorites.size()), pages = (count + rows - 1) / rows;
+  const int top = kCardTop, h = 610, w = 1260;
+  ui.Card("ROTAS FAVORITAS", kX1, top, w, h);
+  const int rows = 8, count = static_cast<int>(g_favorites.size()), pages = std::max(1, (count + rows - 1) / rows);
   g_native_list_page = std::clamp(g_native_list_page, 0, pages - 1);
+  if (g_favorites.empty()) ui.Title("Nenhuma favorita ainda. Em Planejar, escolha a rota e a carga e use \"Salvar como favorita\".", kX1, top - 280, w, 30, kNFont, kNDim);
   const bool can = CanStart(jd.on_job);
   for (int i = g_native_list_page * rows, n = 0; i < count && n < rows; ++i, ++n) {
     const Favorite& f = g_favorites[i];
-    const int y = 655 - n * 44;
-    char mass[32];
-    std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
-    ui.Text("txt.emph.left", Shorten(CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city), 46), x + 30, y, 420, 30);
-    ui.Text("txt.normal.left", Shorten(CargoName(g_data, f.cargo), 36) + "  (" + mass + ")", x + 460, y, 330, 30);
+    const int y = top - 52 - n * 66, x = kX1 + 16;
+    ui.Draw(Fill(kNRow), x, y, w - 32, 58, 3);
+    ui.Draw(Layers({At(0, 5) + Flag(CityFlag(f.src_city), 30, 20), LeftText(Shorten(CityLabel(f.src_city), 22), 40, kNFontBold)}), x + 16, y - 4, 250, 30);
+    ui.Label("para", x + 16, y - 30, 40, 24, kNFontSmall, kNDim);
+    ui.Draw(Layers({At(0, 2) + Flag(CityFlag(f.dst_city), 30, 20), LeftText(Shorten(CityLabel(f.dst_city), 24), 40)}), x + 56, y - 30, 250, 24);
+    ui.Draw(Layers({At(0, 2) + CargoIcon(f.cargo, 26), LeftText(Shorten(CargoName(g_data, f.cargo), 30), 36, kNFont, kNAmber)}), x + 330, y - 4, 330, 30);
+    ui.Label("~" + Tonnes(f.cargo) + "   " + Shorten(CompanyLabel(f.src_company), 16) + " -> " + Shorten(CompanyLabel(f.dst_company), 16), x + 366, y - 30, 440, 24, kNFontSmall, kNDim);
     if (can)
-      ui.Button("Iniciar", x + 800, y, 120, [i] {
+      ui.TextButton("Iniciar", x + 830, y - 13, 130, [i] {
         if (ApplyRoute(g_favorites[i])) {
           g_pending = Pending::Start; // same path as the planner's button
           g_native_leave = true;
@@ -1123,13 +1343,13 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
           g_status = "Essa favorita não existe mais nos dados do jogo (cidade, empresa ou carga).";
           g_status_error = true;
         }
-      });
-    ui.Button("Editar", x + 930, y, 120, [i] {
+      }, true);
+    ui.TextButton("Editar", x + 970, y - 13, 115, [i] {
       ApplyRoute(g_favorites[i]);
       g_editing = i;
       NativeGoTo(NativePage::Planner);
     });
-    ui.Button("Remover", x + 1060, y, 130, [i] {
+    ui.TextButton("Remover", x + 1095, y - 13, 115, [i] {
       g_favorites.erase(g_favorites.begin() + i);
       SaveFavoritesFile();
       g_editing = -1;
@@ -1137,73 +1357,14 @@ void NativeFavoritesPage(NativeUi& ui, const SPF_JobData& jd) {
       g_status_error = false;
     });
   }
-  if (pages > 1) {
-    if (g_native_list_page > 0) ui.Button("< Anterior", 430, 215, 180, [] { --g_native_list_page; });
-    ui.Text("txt.normal.center", "Página " + std::to_string(g_native_list_page + 1) + " de " + std::to_string(pages), 620, 215, 200, 30);
-    if (g_native_list_page < pages - 1) ui.Button("Próxima >", 830, 215, 180, [] { ++g_native_list_page; });
-  }
-  if (jd.on_job) ui.Text("txt.normal.center", "Cancele o serviço atual para iniciar outro.", 470, 176, 500, 30);
-}
-
-void NativeCountryPage(NativeUi& ui) {
-  ui.Text("txt.big.bold.white.center", g_native_src ? "PAÍS DE ORIGEM" : "PAÍS DE DESTINO", 110, 772, 1220, 30);
-  const int count = static_cast<int>(g_data.countries.size()) + 1; // "all" first
-  NativeGrid(ui, count, 5, 12, 40, [&](int i, int x, int y, int w) {
-    Side& side = g_native_src ? g_src : g_dst;
-    if (i == 0) {
-      ui.Button("Todos os países", x, y, w, [&side] {
-        side.country.clear();
-        NativeGoTo(NativePage::City);
-      }, side.country.empty());
-      return;
-    }
-    const Named& c = g_data.countries[i - 1];
-    ui.Button(Shorten(c.name, 22), x, side.country == c.tok ? y + 6 : y, w, [&side, tok = c.tok] {
-      side.country = tok;
-      const Named* city = Find(g_data.cities, side.city);
-      if (city && city->parent != tok) side.city.clear();
-      NativeGoTo(NativePage::City); // the city comes next
-    }, side.country == c.tok);
-  });
-  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
-}
-
-void NativeCityPage(NativeUi& ui) {
-  Side& side = g_native_src ? g_src : g_dst;
-  const Named* country = Find(g_data.countries, side.country);
-  ui.Text("txt.big.bold.white.center", std::string(g_native_src ? "CIDADE DE ORIGEM" : "CIDADE DE DESTINO") + (country ? "  -  " + country->name : std::string()), 110, 772, 1220, 30);
-  std::vector<const Named*> cities;
-  for (const auto& c : g_data.cities)
-    if (side.country.empty() || c.parent == side.country) cities.push_back(&c);
-  NativeGrid(ui, static_cast<int>(cities.size()), 5, 12, 40, [&](int i, int x, int y, int w) {
-    const Named& c = *cities[i];
-    ui.Button(Shorten(c.name, 22), x, side.city == c.tok ? y + 6 : y, w, [&side, tok = c.tok, parent = c.parent] {
-      side.city = tok;
-      side.country = parent;
-      NativeGoTo(NativePage::Planner);
-    }, side.city == c.tok);
-  });
-  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
-  ui.Button("Trocar de país", 1150, 150, 180, [] { NativeGoTo(NativePage::Country); });
-}
-
-void NativeCargoPage(NativeUi& ui) {
-  ui.Text("txt.big.bold.white.center", "CARGA  -  " + CityLabel(g_src.city) + " -> " + CityLabel(g_dst.city), 110, 772, 1220, 30);
-  const char* note = NativeCargoOptions();
-  if (note) ui.Text("txt.normal.center", note, 110, 480, 1220);
-  else
-    NativeGrid(ui, static_cast<int>(g_options.size()), 2, 12, 40, [&](int i, int x, int y, int w) {
-      const RouteOption& o = g_options[i];
-      char mass[32];
-      std::snprintf(mass, sizeof mass, "%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
-      const std::string label = Shorten(CargoName(g_data, o.cargo), 24) + " (" + mass + ")  " + Shorten(o.src_name, 13) + " -> " + Shorten(o.dst_name, 13) + (o.off_market ? " *" : "");
-      ui.Button(label, x, g_selected == i ? y + 6 : y, w, [i] {
-        g_selected = i;
-        NativeGoTo(NativePage::Planner);
-      }, g_selected == i);
+  if (jd.on_job)
+    ui.TextButton("Salvar o serviço atual", kX1, 96, 260, [] {
+      SPF_JobConstants jc{};
+      g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+      AddFavorite({jc.source_city_id, jc.destination_city_id, jc.cargo_id, jc.source_company_id, jc.destination_company_id});
     });
-  ui.Button("Voltar", 110, 150, 180, [] { NativeGoTo(NativePage::Planner); });
-  ui.Text("txt.normal.left", "* fora do mercado dessas empresas", 1030, 150, 300, 30);
+  if (CargoPicked()) ui.TextButton("Salvar a rota do planejador", kX1 + (jd.on_job ? 272 : 0), 96, 290, [] { AddFavorite(SelectedRoute()); });
+  NativePager(ui, pages);
 }
 
 // Writes the script of the current page. False if the file could not be written.
@@ -1217,21 +1378,26 @@ bool WriteNativeScript() {
   SPF_JobData jd{};
   if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
   // the frame every page shares, as in the game's F1 screen
-  ui.Text("txt.window.bcg_rect4", "@@clr_bg_main@@", 40, 860, 1360, 820, 1);
-  ui.Text("txt.big.left", "@@ui_paused@@", 60, 850, 300, 30);
-  ui.Text("txt.big.center", "PLANEJADOR DE ROTAS", 420, 850, 600, 30);
-  const bool planner = g_native_page != NativePage::Favorites;
-  ui.Button("Planejar", 495, planner ? 816 : 810, 220, [] { NativeGoTo(NativePage::Planner); }, planner);
-  ui.Button("Favoritas (" + std::to_string(g_favorites.size()) + ")", 725, planner ? 810 : 816, 220, [] { NativeGoTo(NativePage::Favorites); }, !planner);
+  ui.Node("ui::text_common", " value: \"@@clr_bg_main@@\"\n look_template: txt.window.bcg_rect4\n text: \"\"\n", 40, 860, 1360, 820, 0, 1);
+  ui.Node("ui::text_common", " value: \"@@ui_paused@@\"\n look_template: txt.big.left\n text: \"\"\n", 60, 850, 300, 30, 0, 5);
+  ui.Node("ui::text_common", " value: \"PLANEJADOR DE ROTAS\"\n look_template: txt.big.center\n text: \"\"\n", 420, 850, 600, 30, 0, 5);
+  ui.Draw(RightText("Esc fecha", kNFont, kNDim), 1080, 850, 300, 30);
+  const bool sub_page = g_native_page == NativePage::Place || g_native_page == NativePage::Cargo;
+  if (!sub_page) {
+    const bool planner = g_native_page == NativePage::Planner;
+    ui.TextButton("Planejar", 495, 816, 220, [] { NativeGoTo(NativePage::Planner); }, planner, 42);
+    ui.TextButton("Favoritas (" + std::to_string(g_favorites.size()) + ")", 725, 816, 220, [] { NativeGoTo(NativePage::Favorites); }, !planner, 42);
+  }
   switch (g_native_page) {
     case NativePage::Planner: NativePlannerPage(ui, jd); break;
     case NativePage::Favorites: NativeFavoritesPage(ui, jd); break;
-    case NativePage::Country: NativeCountryPage(ui); break;
-    case NativePage::City: NativeCityPage(ui); break;
+    case NativePage::Place: NativePlacePage(ui); break;
     case NativePage::Cargo: NativeCargoPage(ui); break;
   }
-  if (!g_status.empty()) ui.Text(g_status_error ? "txt.emph.left" : "txt.normal.left", Shorten(g_status, 120), 110, 122, 1220, 26);
-  ui.Button("Retomar", 620, 92, 200, [] { g_native_leave = true; });
+  if (!sub_page) {
+    if (!g_status.empty()) ui.Title(Shorten(g_status, 130), 90, 132, 1260, 24, kNFontSmall, g_status_error ? kNAmber : kNDim);
+    ui.TextButton("Retomar", 620, 96, 200, [] { g_native_leave = true; });
+  }
   CreateDirectoryA(NativeScriptDir().c_str(), nullptr);
   const std::string script = ui.Script();
   FILE* f = nullptr;
@@ -1263,14 +1429,17 @@ void CloseNative() {
 }
 
 void NativeExperiment() {
-  static bool was_down = false;
+  static bool was_down = false, esc_was_down = false;
   if (g_native_window) {
     DWORD pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-    const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    const bool released = was_down && !down;
-    was_down = down;
-    if (released) {
+    const bool ours = pid == GetCurrentProcessId();
+    const bool down = ours && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0, esc = ours && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+    const bool released = was_down && !down, esc_pressed = esc && !esc_was_down;
+    was_down = down, esc_was_down = esc;
+    if (esc_pressed) {
+      CloseNative();
+    } else if (released) {
       std::function<void()> action;
       for (const auto& [id, act] : g_native_buttons)
         if (game::WidgetFlags(g_native_window, id) & (1u << 24)) action = act; // copied: running it replaces the list
@@ -1281,7 +1450,7 @@ void NativeExperiment() {
       }
     }
   } else {
-    was_down = false;
+    was_down = esc_was_down = false;
   }
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {

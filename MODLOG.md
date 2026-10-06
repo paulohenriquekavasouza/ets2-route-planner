@@ -476,3 +476,18 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   paginada), e seletores em grade paginada de botões: País (5×12), Cidade (5×12), Carga (2×12). Cada clique roda a ação e regrava/reabre
   o script (jogo continua pausado); ações que precisam do jogo rodando (iniciar, cancelar, teleporte, Retomar) fecham e retomam.
   Sem caixa de texto nem lista com rolagem (precisariam de RE dos widgets ou de um handler). NÃO testado em jogo.
+- **Etapa 4 (2026-10-05): tela nativa redesenhada** (pedido: mais bonita, selecionado dourado em vez de menor, listas menos custosas,
+  bandeiras, Esc fecha). Planejado antes de codar:
+  - Botões agora são `ui::button` puros com faces próprias (n/s/p_pml = `<img white.mat color=… stretch>` + conteúdo) → mesmo tamanho,
+    dourado quando selecionado (FF0D7FB2). O pml da instância NÃO vale em `ui::button_common` (por isso o destaque anterior não aparecia).
+    Cores explícitas do jogo são **AABBGGRR** (FF4050FF = vermelho de aviso, FF30BCFE = âmbar).
+  - Marcação usada: camadas separadas por `<ret>`, `<offset hshift= vshift=>`, `<align hstyle= vstyle=>`, `<font face=/font/{normal,small,big_bold}.font>`,
+    `<color value=@@clr_white@@|@@clr_txt_d@@|@@clr_sel@@>`.
+  - Imagens do jogo: bandeiras `/material/ui/flags/<iso3>.mat` (textura 64×64, recorte `left=p2 right=p62 top=p12 bottom=p52`; iso3 =
+    `iso_country_code` do def do país), ícone de carga `/material/ui/cargo_logo/<tipo de carroceria>.mat` (tinta `@@clr_cargo_logo@@`),
+    logotipo `/material/ui/company/small/<empresa>.mat` (116×29; 1801 de 1831 filiais têm). Materiais extraídos em `C:\Users\Paulo\ets2-ui\mat`.
+  - `routes.tsv`: N ganhou iso3, P ganhou "tem logo" (3º argumento opcional do gen_routes.py), G ganhou o ícone.
+  - Páginas: Planejar (ROTA com botões grandes bandeira+cidade+país; CARGA com ícone, empresas com logo, distância e pagamento estimados,
+    "Outras empresas"; SERVIÇO ATUAL; faixa de opções; INICIAR), Local (países com bandeira à esquerda, cidades do país à direita com nº de
+    empresas, numa página só), Carga (índice de iniciais + cada carga uma vez, com ícone e peso), Favoritas (linhas com bandeiras e ícone).
+  - Esc (GetAsyncKeyState) fecha e retoma. NÃO testado em jogo.
