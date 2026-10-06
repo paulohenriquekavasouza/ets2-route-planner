@@ -613,6 +613,49 @@ inline bool MapState(void* window, uint32_t id, float* scale, int* zoom, uint32_
   }
 }
 
+// The game's own screens (map, bank, ...) are "desktop" screens described in /ui/desc/*.sui
+// (screen_desc : screen.map { ui_script[]: "world_map|/ui/world_map.sii" }). The route adviser's map
+// button opens the map with (0x68c3d9):
+//   0x506410(desktop = [exe+0x36ae748], char** name, char** "", ptr* out, ptr* zero)
+// with name = "screen.map" when byte [desktop+0x360] is set, else the name at exe+0x2dc1018; `out`
+// comes back holding a reference that the caller lets go (0x108650). The screen pauses the game and
+// closes itself (Esc), like when the player presses M.
+constexpr uintptr_t DESKTOP = 0x36ae748, SCREEN_OPEN = 0x506410, SCREEN_OTHER_NAME = 0x2dc1018, EMPTY_STRING = 0x21d0310;
+constexpr unsigned char kScreenOpenSig[10] = {0x48, 0x8b, 0xc4, 0x57, 0x41, 0x56, 0x48, 0x81, 0xec, 0xf8};
+inline bool OpenMapScreen() {
+  if (std::memcmp(At<const void*>(SCREEN_OPEN), kScreenOpenSig, sizeof kScreenOpenSig) != 0 || std::memcmp(At<const void*>(UI_RELEASE), kUiSigs[5].bytes, 10) != 0) return false;
+  __try {
+    uint8_t* const desktop = *At<uint8_t**>(DESKTOP);
+    if (!desktop) return false;
+    const char* name = "screen.map";
+    const char* empty = At<const char*>(EMPTY_STRING);
+    void* out = nullptr;
+    void* zero = nullptr;
+    At<void (*)(void*, const char**, const char**, void**, void**)>(SCREEN_OPEN)(desktop, desktop[0x360] ? &name : At<const char**>(SCREEN_OTHER_NAME), &empty, &out, &zero);
+    if (out) At<void (*)(void**)>(UI_RELEASE)(&out);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+// Is a window with this name on screen? (the UI manager's list at +0xd8: node+0x10 = window, window+0xa0 = name)
+inline bool GameWindowOpen(const char* name) {
+  __try {
+    uint8_t* const mgr = *At<uint8_t**>(UI_MANAGER);
+    if (!mgr) return false;
+    uint8_t* const head = mgr + 0xd8;
+    int guard = 0;
+    for (uint8_t* node = Ptr(head, 0); node && node != head && guard < 200; node = Ptr(node, 0), ++guard) {
+      const uint8_t* const window = Ptr(node, 0x10);
+      const char* const its = window ? *reinterpret_cast<const char* const*>(window + 0xa0) : nullptr;
+      if (its && std::strcmp(its, name) == 0) return true;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+  return false;
+}
+
 inline bool CloseGameWindow(void** slot) {
   __try {
     void* const mgr = *At<void**>(UI_MANAGER);

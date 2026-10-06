@@ -561,3 +561,14 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
 - Plugin: ao mandar a rota, despausa (`PauseForUi(false)`), espera a telemetria dar distância > 0 (mínimo 1,5 s, máximo 4 s), pausa de novo
   e refaz a página com "Origem - Destino: N km, HhMM pelo GPS do jogo". Sem cliques durante a espera (sem cursor). Mapa abre no zoom 6.
   NÃO testado em jogo; ainda não se sabe se o widget desenha a rota uma vez calculada.
+- **Etapa 2, resultado (2026-10-06, capturas do usuário):** com a espera, o GPS calcula (título "Luxemburgo - Roterdã: 400 km, 5h42" e o
+  conselheiro mostrando a rota), mas o widget de mapa solto NÃO desenha a rota do GPS (mostra estradas, cidades e o caminhão; flags de
+  desenho = [mapa+0x88c] | [mapa+0x888], esta última 0xFFFFFFFF). Além disso abre com a escala errada até o primeiro giro da roda
+  (`0x10005c0` muda o nível, mas a vista só se ajusta depois de um evento de zoom).
+- **Etapa 3: usar a tela de mapa do próprio jogo.** As telas do "desktop" do jogo são `screen_desc` em /ui/desc/*.sui
+  (`screen.map` → "world_map|/ui/world_map.sii", com `world_map_hdl`). O botão de mapa do conselheiro (0x68c3d9) abre com
+  `0x506410(desktop = [exe+0x36ae748], char** nome, char** "", ptr* out, ptr* zero)`; nome = "screen.map" se byte [desktop+0x360], senão
+  o nome em exe+0x2dc1018; `out` é solto depois (0x108650). Plugin: `game::OpenMapScreen()`, `game::GameWindowOpen("world_map")`
+  (lista do gerente de UI) e o fluxo `StartMapPreview/RunMapPreview`: rota → GPS, fecha a nossa tela, espera o GPS (1,5–4 s), abre o mapa
+  do jogo; quando o jogador fecha o mapa, limpa o GPS e reabre o planejador. Em serviço: abre o mapa sem mexer no GPS.
+  A página com o widget embutido ficou inalcançável (código ainda lá, a limpar se a etapa 3 vingar). NÃO testado em jogo.

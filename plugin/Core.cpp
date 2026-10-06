@@ -1099,6 +1099,74 @@ const std::string& CityFlag(const std::string& city) {
   return c ? CountryFlag(c->parent) : none;
 }
 
+// ---- the route on the game's own map screen ----
+// The map screen of the game (key M) draws the route its GPS is on, lets itself be dragged and zoomed and
+// shows cities and companies: everything a preview needs. So: the planner's route goes to the GPS
+// (truck -> origin company -> destination company), our screen closes (the GPS only computes while the
+// game runs), the map screen is opened once the route is there, and when the player closes it the GPS
+// is cleared and the planner comes back. During a job the game does not let the GPS be changed: the map
+// is opened with the job's own route.
+enum class MapPreview { Off, Routing, Opening, Open };
+MapPreview g_map_preview = MapPreview::Off;
+uint64_t g_map_preview_since = 0; // tick count when the current stage began
+bool g_map_preview_ours = false;  // the GPS waypoints are ours (to be cleared afterwards)
+
+void StartMapPreview(bool on_job) {
+  g_map_preview_ours = false;
+  if (!on_job && !g_src.city.empty() && !g_dst.city.empty()) {
+    std::string src_company, dst_company; // the picked cargo's companies, or the first of each city
+    if (CargoPicked()) src_company = g_options[g_selected].src_company, dst_company = g_options[g_selected].dst_company;
+    for (const auto& b : g_data.branches) {
+      if (src_company.empty() && b.parent == g_src.city) src_company = b.tok;
+      if (dst_company.empty() && b.parent == g_dst.city) dst_company = b.tok;
+    }
+    const uint64_t stops[2][2] = {{Token(src_company.c_str()), Token(g_src.city.c_str())}, {Token(dst_company.c_str()), Token(g_dst.city.c_str())}};
+    const int set = game::SetGpsRoute(stops, 2);
+    g_map_preview_ours = set > 0;
+    Log("mapa: GPS " + src_company + "." + g_src.city + " -> " + dst_company + "." + g_dst.city + ": " + std::to_string(set) + " ponto(s)");
+  }
+  g_map_preview = g_map_preview_ours ? MapPreview::Routing : MapPreview::Opening;
+  g_map_preview_since = GetTickCount64();
+  g_native_leave = true; // our screen closes and the game runs
+}
+
+// One step per frame, with our screen closed.
+void RunMapPreview() {
+  if (g_map_preview == MapPreview::Off) return;
+  const uint64_t waited = GetTickCount64() - g_map_preview_since;
+  if (g_map_preview == MapPreview::Routing) {
+    SPF_NavigationData nav{};
+    if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
+    // not before 1.5 s: the telemetry may still hold an older route for a moment (the first answer comes after ~1.1 s)
+    if (!((nav.navigation_distance > 0 && waited > 1500) || waited > 4000)) return;
+    char line[120];
+    std::snprintf(line, sizeof line, "mapa: rota no GPS: %.1f km, %.0f min", nav.navigation_distance / 1000.0f, nav.navigation_time / 60.0f);
+    Log(line);
+    g_map_preview = MapPreview::Opening;
+    g_map_preview_since = GetTickCount64();
+    return; // the map opens on the next frame
+  }
+  if (g_map_preview == MapPreview::Opening) {
+    if (waited < 100) return; // our own screen is gone and the game has run a few frames
+    const bool opened = game::OpenMapScreen();
+    Log(std::string("mapa: tela de mapa do jogo ") + (opened ? "pedida" : "NÃO abriu"));
+    g_map_preview = opened ? MapPreview::Open : MapPreview::Off;
+    g_map_preview_since = GetTickCount64();
+    if (!opened && g_map_preview_ours) game::SetGpsRoute(nullptr, 0);
+    return;
+  }
+  // Open: until the player closes the map (it takes a moment to appear)
+  static bool seen = false;
+  const bool open = game::GameWindowOpen("world_map");
+  if (open) seen = true;
+  if ((seen && !open) || (!seen && waited > 5000)) {
+    Log(std::string("mapa: ") + (seen ? "tela de mapa fechada" : "a tela de mapa não apareceu em 5 s") + (g_map_preview_ours ? "; GPS limpo (" + std::to_string(game::SetGpsRoute(nullptr, 0)) + ")" : ""));
+    if (seen) g_native_toggle = true; // back to the planner
+    seen = false;
+    g_map_preview = MapPreview::Off;
+  }
+}
+
 // EXPERIMENT, stage 2 of the route preview: the game's maps draw the route its GPS is on, so the route
 // picked in the planner is sent to the GPS (truck -> origin company -> destination company) while the
 // map page is open and taken out again when it is left. The game refuses while a job is running.
@@ -1178,6 +1246,8 @@ void NativePlaceButton(NativeUi& ui, const char* label, Side& side, bool src, in
   });
 }
 
+void StartMapPreview(bool on_job);
+
 void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   const int top = kCardTop, h = kCardH, w = kCardW, bw = w - 2 * kNPad, bottom = top - h;
   // ---- route ----
@@ -1186,7 +1256,9 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   ui.TextButton("Usar a cidade atual", kX1 + kNPad, top - 148, bw, [] { PickCurrentCity(); });
   NativePlaceButton(ui, "DESTINO", g_dst, false, kX1 + kNPad, top - 206, bw);
   ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
-  ui.TextButton("Ver no mapa (experimento)", kX1 + kNPad, bottom + 50, bw, [] { NativeGoTo(NativePage::Map); });
+  // The route on the game's own map screen. (The map page of the first attempts, a map widget inside our
+  // window, is not reachable any more: such a widget shows the world but not the GPS route.)
+  ui.TextButton("Ver a rota no mapa do jogo", kX1 + kNPad, bottom + 50, bw, [on_job = jd.on_job] { StartMapPreview(on_job); });
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
@@ -1664,6 +1736,7 @@ void CloseNative() {
 
 void NativeExperiment() {
   static bool was_down = false, esc_was_down = false;
+  if (!g_native_window) RunMapPreview();
   if (g_native_route_until && g_native_window) { // the game is running so that it computes the route: pause again once it has
     SPF_NavigationData nav{};
     if (g_tel) g_core->telemetry->Tel_GetNavigationData(g_tel, &nav, sizeof nav);
