@@ -453,3 +453,11 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   (contadores em [exe+0x36ae718]+0xac0/0xac4/0xac8/0xacc; byte [exe+0x36ae740]+0x28 = 0) e entrega o mouse à UI; `0x68bb60()` desfaz.
   A função 0x688e30 (ao mudar a pausa) grava [gerente UI+0x348] = !pausado. Plugin: `game::PauseForUi(bool)`; Home pausa + abre, Home fecha + retoma.
   Botão de teste: +0x1d7 alterna 80/89 e os floats em +0x208/+0x218 variam a cada quadro (animação de foco), sem mouse. NÃO testado em jogo.
+- **Etapa 2 (2026-10-05):** com 0x68ca20 o cursor nativo apareceu e o botão reagiu, mas o mundo ficou PRETO (essa função também desliga
+  a câmera e muda o modo do HUD; é para telas cheias). `game::PauseForUi` passou a repetir a sequência à mão SEM a parte da câmera
+  ([exe+0x36ae740]+0x28 → 0x5015a0 → vt[20]/vt[18]) e sem o `hud->vt[13]`: entrada de UI (uimgr+0x3b0: vt[33](&0,&2) / vt[21](&{0,-1}),
+  0x38a770), contadores G+0xac0..0xacc, 0x428b20/0x428240, temporizador 0x10aeb0/0x58c1e0, 0x441f60(modo 2/1).
+  Botão sob o ponteiro: flags +0x60 ganharam os bits 24 e 25 (5C→5F no byte +0x63), +0xc0 0→1; +0x3c/+0x40 = posição do ponteiro no widget.
+- Conteúdo dinâmico: `WriteNativeScript` gera o .sii a cada abertura (favoritas: texto + botão "Iniciar" por linha, até 8; "Fechar").
+  Clique = botão esquerdo solto (GetAsyncKeyState) com um botão nosso com o bit 24 ligado → fecha, retoma e inicia a favorita pelo mesmo
+  caminho do F8 (ou avisa pela caixa do conselheiro se já há serviço). Mudanças de flags vão para o log. NÃO testado em jogo.

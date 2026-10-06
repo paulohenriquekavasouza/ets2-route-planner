@@ -423,21 +423,74 @@ inline int OpenGameWindow(void** slot, const char* name, const char* path) {
   }
 }
 // The game's own cursor only exists while the game is paused for a screen (driving, the mouse belongs to
-// the camera). The pair the game uses for its message screens (0xa63a8c, 0xa05974 -> 0x9c1160):
-//   0x68ca20(adviser = [actor+0x30])   hides the adviser panels, pauses the simulation, hands the mouse to the UI
-//   0x68bb60()                         undoes it
-// They keep counters ([exe+0x36ae718]+0xac0..0xacc), so every pause needs its resume.
-constexpr uintptr_t UI_PAUSE = 0x68ca20, UI_RESUME = 0x68bb60;
-constexpr unsigned char kUiPauseSig[2][10] = {{0x40, 0x53, 0x57, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x05},
-                                              {0x48, 0x89, 0x4c, 0x24, 0x08, 0x53, 0x55, 0x56, 0x57, 0x48}};
+// the camera). The game's message screens do it with 0x68ca20(adviser) / 0x68bb60(), but those also
+// switch the camera off ([exe+0x36ae740]+0x28) and tell the HUD to change mode: with a small window of
+// ours the world went black. This is the same sequence without those two parts:
+//   pause : input = uimgr+0x3b0; input->vt[33](&0, &2); 0x38a770(uimgr);
+//           G = [exe+0x36ae718]; ++G[0xacc]; ++G[0xac8]; ++G[0xac0];
+//           first pause: G.b[0x1112] = 1 + 0x428b20(G) if it was not; G.b[0x13e0] = 0; 0x428240(G);
+//           ++G[0xac4]; 0x441f60([exe+0x36ae6d0], 2)
+//   resume: the counters back; last resume: G.b[0x1112] = 0 + 0x428b20(G) if set; G.b[0x13e0] = 0;
+//           0x10aeb0(G+0x13b8); 0x58c1e0(G+0x13b8, 0); 0x428240(G);
+//           input->vt[21](&{0, -1}); 0x38a770(uimgr); 0x441f60([exe+0x36ae6d0], 1) unless [owner+0x35b8]
+// Every pause needs its resume (they are counters).
+constexpr uintptr_t GAME_STATE = 0x36ae718, PAUSE_MODE_OBJ = 0x36ae6d0, PAUSE_NOTIFY = 0x428b20, PAUSE_APPLY = 0x428240, PAUSE_TIMER_A = 0x10aeb0,
+                    PAUSE_TIMER_B = 0x58c1e0, PAUSE_MODE = 0x441f60, UI_INPUT_REFRESH = 0x38a770;
+constexpr Sig kPauseSigs[] = {
+    {PAUSE_NOTIFY, {0x40, 0x53, 0x48, 0x83, 0xec, 0x50, 0x48, 0x8d, 0x44, 0x24}},  {PAUSE_APPLY, {0x48, 0x83, 0xec, 0x28, 0x48, 0x8b, 0x15, 0xdd, 0x95, 0x25}},
+    {PAUSE_TIMER_A, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10}}, {PAUSE_TIMER_B, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
+    {PAUSE_MODE, {0x48, 0x89, 0x6c, 0x24, 0x20, 0x56, 0x48, 0x83, 0xec, 0x50}},    {UI_INPUT_REFRESH, {0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10}},
+};
 inline bool PauseForUi(bool pause) {
-  if (std::memcmp(At<const void*>(UI_PAUSE), kUiPauseSig[0], 10) != 0 || std::memcmp(At<const void*>(UI_RESUME), kUiPauseSig[1], 10) != 0) return false;
+  for (const Sig& s : kPauseSigs)
+    if (std::memcmp(At<const void*>(s.rva), s.bytes, sizeof s.bytes) != 0) return false;
+  using Fn = void (*)(void*);
   __try {
     uint8_t* const owner = *At<uint8_t**>(ACTOR_OWNER);
-    uint8_t* const actor = owner ? Ptr(owner, 0x31b0) : nullptr;
-    uint8_t* const adviser = Alive(actor) ? Ptr(actor, 0x30) : nullptr;
-    if (!adviser) return false;
-    At<void (*)(void*)>(pause ? UI_PAUSE : UI_RESUME)(adviser);
+    uint8_t* const g = *At<uint8_t**>(GAME_STATE);
+    uint8_t* const mgr = *At<uint8_t**>(UI_MANAGER);
+    void* const mode = *At<void**>(PAUSE_MODE_OBJ);
+    if (!owner || !g || !mgr || !mode) return false;
+    uint8_t* const input = mgr + 0x3b0;
+    void** const vt = *reinterpret_cast<void***>(input);
+    int32_t* const count = reinterpret_cast<int32_t*>(g + 0xac0); // [0] paused, [1] +0xac4, [2] +0xac8, [3] +0xacc
+    if (pause) {
+      int32_t key = 0;
+      int64_t value = 2;
+      reinterpret_cast<void (*)(void*, int32_t*, int64_t*)>(vt[33])(input, &key, &value);
+      At<Fn>(UI_INPUT_REFRESH)(mgr);
+      ++count[3], ++count[2], ++count[0];
+      if (count[0] == 1) {
+        if (g[0x1112] != 1) {
+          g[0x1112] = 1;
+          At<Fn>(PAUSE_NOTIFY)(g);
+        }
+        g[0x13e0] = 0;
+        At<Fn>(PAUSE_APPLY)(g);
+      }
+      ++count[1];
+      At<void (*)(void*, int)>(PAUSE_MODE)(mode, 2);
+    } else {
+      --count[3], --count[2];
+      if (--count[0] == 0) {
+        if (g[0x1112] != 0) {
+          g[0x1112] = 0;
+          At<Fn>(PAUSE_NOTIFY)(g);
+        }
+        g[0x13e0] = 0;
+        At<Fn>(PAUSE_TIMER_A)(g + 0x13b8);
+        At<void (*)(void*, int)>(PAUSE_TIMER_B)(g + 0x13b8, 0);
+        At<Fn>(PAUSE_APPLY)(g);
+      }
+      --count[1];
+      struct {
+        int32_t key, pad;
+        int64_t value;
+      } reset{0, 0, -1};
+      reinterpret_cast<void (*)(void*, void*)>(vt[21])(input, &reset);
+      At<Fn>(UI_INPUT_REFRESH)(mgr);
+      if (*reinterpret_cast<int32_t*>(owner + 0x35b8) == 0) At<void (*)(void*, int)>(PAUSE_MODE)(mode, 1);
+    }
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
@@ -459,15 +512,14 @@ inline uint8_t* FindWidget(uint8_t* w, uint32_t id, int depth = 0) {
   }
   return nullptr;
 }
-// Diagnostics for the experiment: copies `size` bytes of the widget `id` of `window`. False if not there.
-inline bool SnapshotWidget(void* window, uint32_t id, uint8_t* out, size_t size) {
+// State flags (+0x60) of the widget `id` of `window`; bit 24 is set while the pointer is over it
+// (seen live on a button). 0 if the widget is not there.
+inline uint32_t WidgetFlags(void* window, uint32_t id) {
   __try {
     uint8_t* const w = FindWidget(static_cast<uint8_t*>(window), id);
-    if (!w) return false;
-    std::memcpy(out, w, size);
-    return true;
+    return w ? *reinterpret_cast<uint32_t*>(w + 0x60) : 0;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
+    return 0;
   }
 }
 

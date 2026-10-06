@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <map>
 #include <set>
@@ -847,40 +848,153 @@ void CloseNative() {
   Log(std::string("janela do jogo (experimento): ") + (closed ? "fechada" : "falha ao fechar") + (g_native_paused ? (resumed ? ", jogo retomado" : ", FALHA ao retomar o jogo") : ""));
   g_native_paused = false;
 }
-// While the window is open: log which bytes of the test button (id 200) change, to learn where the game
-// keeps "pointer over it" and "pressed" (a window of ours has no handler class to be told about clicks).
-void WatchNativeButton() {
-  static uint8_t before[0x240];
-  static bool have = false;
+// ---- the window's script, written before each opening ----
+// The game builds its screens from SiiNunit scripts; ours is generated from the favourites so the
+// content is current without having to change widgets in memory. Coordinates are the UI's virtual
+// 1440x900 with the origin at the bottom left (so top > bottom).
+constexpr uint32_t kNativeClose = 200, kNativeFavBase = 300;
+constexpr int kNativeMaxFavs = 8;
+std::vector<uint32_t> g_native_buttons; // ids of the buttons in the window that is open
+
+std::string SiiString(const std::string& s) {
+  std::string out;
+  for (const char ch : s) {
+    if (ch == '"' || ch == '\\') out += '\\';
+    out += ch;
+  }
+  return out;
+}
+
+std::string SiiNode(const char* kind, const std::string& name, const std::string& body, int l, int r, int t, int b, uint32_t id, int layer,
+                    const std::string& parent, bool container) {
+  char tail[320];
+  std::snprintf(tail, sizeof tail, " coords_l: %d\n coords_r: %d\n coords_t: %d\n coords_b: %d\n area_l: %d\n area_r: %d\n area_t: %d\n area_b: %d\n id: %u\n layer: %d\n tab: -1\n pointer: -1\n",
+                l, r, t, b, container ? l : 1, container ? r : 0, container ? t : 0, container ? b : 1, id, layer);
+  return std::string(kind) + " : " + name + " {\n" + body + tail + " my_parent: " + parent + "\n}\n\n";
+}
+std::string SiiLabel(const std::string& name, const char* look, const std::string& text, int l, int r, int t, int b, uint32_t id, int layer, const std::string& parent) {
+  return SiiNode("ui::text_common", name, " value: \"" + SiiString(text) + "\"\n look_template: " + look + "\n text: \"\"\n", l, r, t, b, id, layer, parent, false);
+}
+std::string SiiButton(const std::string& name, const std::string& text, int l, int r, int t, uint32_t id, const std::string& parent) {
+  return SiiNode("ui::button_common", name,
+                 " value: \"" + SiiString(text) + "\"\n value2: \"\"\n look_template: btn.normal\n n_pml: \"\"\n s_pml: \"\"\n s2_pml: \"\"\n d_pml: \"\"\n p_pml: \"\"\n button_type: normal\n",
+                 l, r, t, t - 30, id, 4, parent, false);
+}
+
+std::string NativeScriptPath() {
+  const char* home = std::getenv("USERPROFILE"); // ponytail: Documents in its default place; ask the shell if someone moved theirs
+  return std::string(home ? home : "") + "\\Documents\\Euro Truck Simulator 2\\routeplanner\\planner.sii";
+}
+
+// Writes the script. False if the file could not be written.
+bool WriteNativeScript() {
+  const std::string wnd = "_nameless.rpl.wnd", grp = "_nameless.rpl.grp";
+  const int rows = std::min(static_cast<int>(g_favorites.size()), kNativeMaxFavs);
+  const int height = 150 + std::max(rows, 1) * 46 + 70, top = 450 + height / 2, bottom = top - height, left = 360, right = 1080;
+  SPF_JobData jd{};
+  if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
+  std::string info = "Nenhum serviço em andamento. Escolha uma rota favorita para iniciar.";
+  if (jd.on_job) {
+    SPF_JobConstants jc{};
+    g_core->telemetry->Tel_GetJobConstants(g_tel, &jc, sizeof jc);
+    info = std::string("Serviço atual: ") + jc.cargo_name + ", " + jc.source_city + " -> " + jc.destination_city;
+  }
+  std::vector<std::string> names;
+  std::string kids;
+  g_native_buttons.clear();
+  const auto add = [&](const std::string& name, const std::string& node) {
+    names.push_back(name);
+    kids += node;
+  };
+  add("_nameless.rpl.bcg", SiiLabel("_nameless.rpl.bcg", "txt.window.bcg_rect4", "@@clr_bg_main@@", left + 1, right - 1, top - 1, bottom + 2, 1, 1, grp));
+  add("_nameless.rpl.title", SiiLabel("_nameless.rpl.title", "txt.title.center", "PLANEJADOR DE ROTAS", left + 40, right - 40, top - 10, top - 42, 10, 3, grp));
+  add("_nameless.rpl.info", SiiLabel("_nameless.rpl.info", "txt.normal.center", info, left + 30, right - 30, top - 64, top - 96, 11, 2, grp));
+  for (int i = 0; i < rows; ++i) {
+    const Favorite& f = g_favorites[i];
+    const int y = top - 124 - i * 46;
+    const std::string n = std::to_string(i);
+    add("_nameless.rpl.row" + n, SiiLabel("_nameless.rpl.row" + n, "txt.normal.left", CityLabel(f.src_city) + " -> " + CityLabel(f.dst_city) + "   ·   " + CargoName(g_data, f.cargo),
+                                           left + 30, right - 190, y, y - 30, 400 + i, 2, grp));
+    add("_nameless.rpl.go" + n, SiiButton("_nameless.rpl.go" + n, "Iniciar", right - 170, right - 30, y, kNativeFavBase + i, grp));
+    g_native_buttons.push_back(kNativeFavBase + i);
+  }
+  if (rows == 0)
+    add("_nameless.rpl.none", SiiLabel("_nameless.rpl.none", "txt.normal.center", "Nenhuma rota favorita ainda. Salve rotas pelo F8.", left + 30, right - 30, top - 124, top - 154, 400, 2, grp));
+  add("_nameless.rpl.close", SiiButton("_nameless.rpl.close", "Fechar", 620, 820, bottom + 52, kNativeClose, grp));
+  g_native_buttons.push_back(kNativeClose);
+
+  std::string group_body = " fitting: false\n my_children: " + std::to_string(names.size()) + "\n";
+  for (size_t i = 0; i < names.size(); ++i) group_body += " my_children[" + std::to_string(i) + "]: " + names[i] + "\n";
+  const std::string script =
+      "SiiNunit\n{\n" +
+      SiiNode("ui::window", wnd,
+              " window_handler: null\n clip_children: true\n keep_aspect: center\n user_string_data: \"\"\n first_direction_focus_id: 0\n fitting: false\n my_children: 1\n my_children[0]: " + grp + "\n",
+              0, 1440, 900, 0, 0, 0, "null", true) +
+      SiiNode("ui::group", grp, group_body, left, right, top, bottom, 111, 0, wnd, true) + kids + "}\n";
+  const std::string path = NativeScriptPath();
+  CreateDirectoryA(path.substr(0, path.find_last_of('\\')).c_str(), nullptr);
+  FILE* f = nullptr;
+  if (fopen_s(&f, path.c_str(), "wb") != 0 || !f) return false;
+  const bool ok = std::fwrite(script.data(), 1, script.size(), f) == script.size();
+  std::fclose(f);
+  return ok;
+}
+
+// A window of ours has no handler class to be told about clicks: a click is the left button released
+// while a button has the pointer over it (bit 24 of its flags). Flag changes are logged for now.
+void NativeClick(uint32_t id) {
+  Log("janela do jogo (experimento): clique no botão " + std::to_string(id));
+  CloseNative(); // everything a button does needs the game running again
+  if (id < kNativeFavBase || id >= kNativeFavBase + g_favorites.size()) return;
+  SPF_JobData jd{};
+  if (g_tel) g_core->telemetry->Tel_GetJobData(g_tel, &jd, sizeof jd);
+  if (!CanStart(jd.on_job)) {
+    game::ShowHint("<color value=@@clr_sel@@>Planejador de rotas<br><color value=@@clr_txt@@>Cancele o serviço atual para iniciar outro.");
+    g_hint_off_in = 480;
+  } else if (ApplyRoute(g_favorites[id - kNativeFavBase])) {
+    g_pending = Pending::Start; // same path as the F8 planner's button
+  }
+}
+
+void WatchNativeButtons() {
+  static std::map<uint32_t, uint32_t> last;
+  static bool was_down = false;
   static int logged = 0;
   if (!g_native_window) {
-    have = false, logged = 0;
+    last.clear();
+    was_down = false, logged = 0;
     return;
   }
-  uint8_t now[sizeof before];
-  if (!game::SnapshotWidget(g_native_window, 200, now, sizeof now)) return;
-  if (have && logged < 60 && std::memcmp(before, now, sizeof now) != 0) {
-    std::string line = "botão de teste mudou:";
-    char item[48];
-    int shown = 0;
-    for (size_t i = 0; i < sizeof now && shown < 10; ++i)
-      if (before[i] != now[i]) {
-        std::snprintf(item, sizeof item, " +0x%zx %02x>%02x", i, before[i], now[i]);
-        line += item;
-        ++shown;
-      }
-    Log(line);
-    ++logged;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+  const bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+  uint32_t hot = 0;
+  for (const uint32_t id : g_native_buttons) {
+    const uint32_t flags = game::WidgetFlags(g_native_window, id);
+    const auto known = last.find(id);
+    if (known != last.end() && known->second != flags && logged < 200) {
+      char line[96];
+      std::snprintf(line, sizeof line, "botão %u: flags %08X -> %08X%s", id, known->second, flags, down ? " (botão do mouse apertado)" : "");
+      Log(line);
+      ++logged;
+    }
+    last[id] = flags;
+    if (flags & (1u << 24)) hot = id;
   }
-  std::memcpy(before, now, sizeof now);
-  have = true;
+  const bool released = was_down && !down;
+  was_down = down;
+  if (released && hot) NativeClick(hot);
 }
 
 void NativeExperiment() {
-  WatchNativeButton();
+  WatchNativeButtons();
   if (!g_native_toggle.exchange(false)) return;
   if (g_native_window) {
     CloseNative();
+    return;
+  }
+  if (!WriteNativeScript()) {
+    Log("janela do jogo (experimento): não consegui gravar " + NativeScriptPath());
     return;
   }
   g_native_paused = game::PauseForUi(true);
