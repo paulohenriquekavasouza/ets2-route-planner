@@ -11,7 +11,8 @@ Lines (tab-separated):
   P company_token company_name city_token logo   (company present in city; logo 1 = /material/ui/company/small/<token>.mat exists)
   O company_token cargo_token                (company ships it)
   I company_token cargo_token                (company receives it)
-  G cargo_token name est_mass_kg icon        (icon = /material/ui/cargo_logo/<icon>.mat, from the first body type)
+  G cargo_token name est_mass_kg icon min_kg (icon = /material/ui/cargo_logo/<icon>.mat, from the first body type;
+                                              est_mass_kg = the heaviest load, min_kg = the lightest: see est_mass)
 """
 import re, sys
 from pathlib import Path
@@ -45,7 +46,7 @@ def tr(text, fallback):
     return out.replace("\\n", " ").strip()  # some UI strings carry a literal \n
 
 countries, cities, companies, cargo, iso, icon = {}, {}, {}, {}, {}, {}
-spec, trailers = {}, []  # cargo -> (body types, unit mass, unit volume); single-trailer (body, volume, payload)
+spec, trailers = {}, []  # cargo -> (body types, unit mass, unit volume); single-trailer (body, volume, payload, own mass)
 place, ship, recv = set(), set(), set()
 for d in defs:
     for f in d.glob("country/*.sui"):
@@ -76,23 +77,33 @@ for d in defs:
             cargo[m.group(1)] = tr(field(t, "name"), pretty(m.group(1)))
             spec[m.group(1)] = (set(fields(t, r"body_types\[\]")), num(t, "mass"), num(t, "volume"))
             icon[m.group(1)] = next((b for b in fields(t, r"body_types\[\]") if b in ICONS), "trailer_generic")
-    for f in d.glob("vehicle/trailer_defs/*.sii"):
+    # the trailers every cargo of a body type shares, and the ones a cargo brings itself (cargo/<cargo>/*.sii:
+    # car transporters, the trailers that are themselves the delivery...), which v4.0.2 did not read
+    for f in list(d.glob("vehicle/trailer_defs/*.sii")) + list(d.glob("cargo/*/*.sii")):
         t = read(f)
         if (field(t, "chain_type") or "single") == "single" and field(t, "body_type"):
-            payload = num(t, "gross_trailer_weight_limit") - num(t, "chassis_mass") - num(t, "body_mass")
-            trailers.append((field(t, "body_type"), num(t, "volume"), payload))
+            own = num(t, "chassis_mass") + num(t, "body_mass")
+            trailers.append((field(t, "body_type"), num(t, "volume"), num(t, "gross_trailer_weight_limit") - own, own))
 
-# ponytail: the heaviest load one standard single trailer takes; the game may pick another trailer
+# What the job says the cargo weighs: units x unit mass, with units = what fits in the trailer by volume and
+# by its weight limit (the game's own rule, 0x84f0e0). The game picks one of the trailers of the cargo's body
+# types, so the answer is a range: (lightest, heaviest) over the single trailers.
+# When the trailer is the delivery itself (unit mass 0.0001) the job shows the trailer's own weight.
+# ponytail: doubles and the per-country weight limits are left out; add them if the range proves wrong.
 def est_mass(c):
     bodies, mass, vol = spec.get(c, (set(), 0.0, 0.0))
-    loads = [min(int(tv // vol), int(pl // mass)) * mass for b, tv, pl in trailers if b in bodies and mass > 0 and vol > 0]
-    return round(max(loads, default=0) or mass)
+    loads = []
+    for b, tv, pl, own in trailers:
+        if b in bodies and mass > 0 and vol > 0:
+            load = min(int(tv // vol), int(pl // mass)) * mass
+            loads.append(load if load >= 100 else own)
+    return (round(min(loads)), round(max(loads))) if loads else (round(mass), round(mass))
 
 lines = [f"N\t{k}\t{v}\t{iso.get(k, '')}" for k, v in sorted(countries.items())]
 lines += [f"C\t{k}\t{n}\t{c}" for k, (n, c) in sorted(cities.items()) if c in countries]
 lines += [f"P\t{co}\t{companies.get(co, co.upper())}\t{ci}\t{int(co in logos)}" for co, ci in sorted(place) if ci in cities]
 lines += [f"O\t{co}\t{cg}" for co, cg in sorted(ship) if cg in cargo]
 lines += [f"I\t{co}\t{cg}" for co, cg in sorted(recv) if cg in cargo]
-lines += [f"G\t{k}\t{v}\t{est_mass(k)}\t{icon.get(k, 'trailer_generic')}" for k, v in sorted(cargo.items())]
+lines += [f"G\t{k}\t{v}\t{est_mass(k)[1]}\t{icon.get(k, 'trailer_generic')}\t{est_mass(k)[0]}" for k, v in sorted(cargo.items())]
 out.write_text("\n".join(lines) + "\n", "utf-8")
 print(f"{len(countries)} países, {len(cities)} cidades, {len(place)} filiais, {len(cargo)} cargas -> {out}")

@@ -19,7 +19,8 @@ struct RouteData {
   std::vector<Named> countries, cities, branches; // branches: tok = company, parent = city
   std::set<std::pair<std::string, std::string>> ships, receives; // (company, cargo)
   std::map<std::string, std::string> cargo_names;
-  std::map<std::string, int> cargo_mass; // kg, estimated (see tools/gen_routes.py)
+  std::map<std::string, int> cargo_mass; // kg, estimated (see tools/gen_routes.py): the heaviest load
+  std::map<std::string, int> cargo_mass_min; // and the lightest (the game picks the trailer); absent = the same
   std::map<std::string, std::string> cargo_icon; // cargo -> name of its picture in the game's /material/ui/cargo_logo
   std::set<std::string> logos;                   // companies the game has a logo for (/material/ui/company/small)
 };
@@ -57,6 +58,7 @@ inline bool LoadRoutes(const std::string& path, RouteData& d) {
       d.cargo_names[f[1]] = f[2];
       if (f.size() >= 4) d.cargo_mass[f[1]] = std::atoi(f[3].c_str());
       if (f.size() >= 5) d.cargo_icon[f[1]] = f[4];
+      if (f.size() >= 6) d.cargo_mass_min[f[1]] = std::atoi(f[5].c_str());
     }
   }
   auto by_name = [](const Named& a, const Named& b) { return a.name < b.name; };
@@ -103,6 +105,13 @@ inline std::vector<RouteOption> RouteOptions(const RouteData& d, const std::stri
 inline int CargoMass(const RouteData& d, const std::string& cargo) {
   const auto it = d.cargo_mass.find(cargo);
   return it == d.cargo_mass.end() ? 0 : it->second;
+}
+// "23 t", or "12-23 t" when it depends on the trailer the game picks
+inline std::string CargoTonnes(const RouteData& d, const std::string& cargo) {
+  const int most = (CargoMass(d, cargo) + 500) / 1000;
+  const auto it = d.cargo_mass_min.find(cargo);
+  const int least = it == d.cargo_mass_min.end() ? most : (it->second + 500) / 1000;
+  return (least < most ? std::to_string(least) + "-" : std::string()) + std::to_string(most) + " t";
 }
 
 // ---- favourite routes: favorites.tsv next to the DLL, one route per line ----

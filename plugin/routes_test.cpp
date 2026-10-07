@@ -11,7 +11,7 @@ int main() {
   std::ofstream(path) << "N\tgermany\tDeutschland\nC\tberlin\tBerlin\tgermany\nC\tbremen\tBremen\tgermany\n"
                          "P\ttesco\tTesco\tberlin\nP\tkaarfor\tKaarfor\tbremen\nP\tlisette\tLisette\tbremen\n"
                          "O\ttesco\tapples\nO\ttesco\tbeef\nI\tkaarfor\tapples\nI\tlisette\tbeef\nI\tlisette\tapples\n"
-                         "G\tapples\tApples\t23000\nG\tbeef\tBeef\n";
+                         "G\tapples\tApples\t23000\tcurtainside\t11600\nG\tbeef\tBeef\n";
   RouteData d;
   assert(LoadRoutes(path, d));
   assert(d.cities.size() == 2 && d.branches.size() == 3);
@@ -22,6 +22,7 @@ int main() {
   const auto any = RouteOptions(d, "bremen", "berlin", true); // nobody in bremen ships anything
   assert(any.size() == 2 && any[0].off_market && any[0].src_company == "kaarfor" && any[0].dst_company == "tesco");
   assert(CargoMass(d, "apples") == 23000 && CargoMass(d, "beef") == 0); // mass column is optional
+  assert(CargoTonnes(d, "apples") == "12-23 t" && CargoTonnes(d, "beef") == "0 t");
   // favourites survive a save/load round trip, and find their option again
   const std::vector<Favorite> favs = {{"berlin", "bremen", "beef", "tesco", "lisette"}, {"berlin", "bremen", "apples", "tesco", "nobody"}};
   assert(SaveFavorites("fav_test.tsv", favs) && LoadFavorites("fav_test.tsv") == favs && LoadFavorites("missing.tsv").empty());

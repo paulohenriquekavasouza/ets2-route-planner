@@ -512,8 +512,8 @@ void DrawCargo(SPF_UI_API* ui) {
       const std::string name = CargoName(g_data, o.cargo) + (o.off_market ? " *" : "");
       if (!Matches(name + " " + o.src_name + " " + o.dst_name, g_cargo_filter)) continue;
       off_market |= o.off_market;
-      char mass[24];
-      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, o.cargo) / 1000.0);
+      const std::string tonnes = "~" + CargoTonnes(g_data, o.cargo);
+      const char* const mass = tonnes.c_str();
       ui->UI_TableNextRow(SPF_TableRowFlags{}, 0);
       ui->UI_TableNextColumn();
       if (ui->UI_Selectable((name + "##" + std::to_string(i)).c_str(), g_selected == i, SPF_SELECTABLE_FLAG_SPAN_ALL_COLUMNS, 0, 0)) g_selected = i;
@@ -603,8 +603,7 @@ void DrawFavorites(SPF_UI_API* ui, bool on_job) {
     for (int i = 0; i < static_cast<int>(g_favorites.size()); ++i) {
       const Favorite& f = g_favorites[i];
       const std::string id = "##fav" + std::to_string(i);
-      char mass[24];
-      std::snprintf(mass, sizeof mass, "~%.0f t", CargoMass(g_data, f.cargo) / 1000.0);
+      const std::string mass = "~" + CargoTonnes(g_data, f.cargo);
       ui->UI_BeginGroup();
       Wrapped(ui, kText, CityLabel(f.src_city) + "  →  " + CityLabel(f.dst_city), text_w);
       Wrapped(ui, kAmber, CargoName(g_data, f.cargo) + "  ·  " + mass, text_w);
@@ -1102,11 +1101,7 @@ std::string Fold(const std::string& s) {
   return out;
 }
 
-std::string Tonnes(const std::string& cargo) {
-  char mass[24];
-  std::snprintf(mass, sizeof mass, "%.0f t", CargoMass(g_data, cargo) / 1000.0);
-  return mass;
-}
+std::string Tonnes(const std::string& cargo) { return CargoTonnes(g_data, cargo); }
 std::string Thousands(long long n) { // 12345 -> "12.345"
   std::string s = std::to_string(n);
   for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(i, ".");

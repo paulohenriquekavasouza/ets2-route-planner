@@ -706,3 +706,12 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   - Botão "Maior rota possível" fora da tela nativa (a função `PickLongestRoute` fica; o F8 ainda tem o dele); a linha "N empresas na
     origem, M no destino" subiu para o lugar.
 - **v4.0.2 (2026-10-06): confirmada em jogo pelo usuário ("corrigido") e publicada.**
+- **Rumo à v4.0.3 (2026-10-06): peso das cargas.** O usuário viu 20 t na lista e 16 t no serviço, e 0 t na lista e 6 t no serviço.
+  - O gerador só lia os reboques genéricos (`vehicle/trailer_defs`). Várias cargas trazem o próprio reboque em `cargo/<carga>/*.sii`
+    (cegonhas, reboques que são a própria entrega…); sem eles a conta caía na massa de UMA unidade (carros: "0 t").
+  - Reboque que é a entrega (massa da unidade 0,0001; Feldbinder, Krone…): o serviço mostra o peso do próprio reboque
+    (`chassis_mass + body_mass`, 6.160 kg nos Feldbinder = os "6 t" vistos). Agora é isso que a lista mostra.
+  - O jogo escolhe um dos reboques do tipo de carroceria, e o peso muda com ele (maçãs: 11,6 t no curto, 23,2 t no de 3 eixos). A lista
+    mostrava só o maior. Agora `routes.tsv` leva o menor numa 6ª coluna e a tela mostra a faixa ("12-23 t", `CargoTonnes`); um número só
+    quando não varia. A ordenação por peso usa o maior. 321 das 413 cargas têm faixa de mais de 2 t.
+  - Fora da conta (ponytail): reboques duplos e limites de peso por país. NÃO conferido em jogo.
