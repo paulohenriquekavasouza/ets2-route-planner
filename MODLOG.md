@@ -715,3 +715,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     mostrava só o maior. Agora `routes.tsv` leva o menor numa 6ª coluna e a tela mostra a faixa ("12-23 t", `CargoTonnes`); um número só
     quando não varia. A ordenação por peso usa o maior. 321 das 413 cargas têm faixa de mais de 2 t.
   - Fora da conta (ponytail): reboques duplos e limites de peso por país. NÃO conferido em jogo.
+- **v4.0.3 (2026-10-06): publicada a pedido do usuário** (peso das cargas em faixa; não conferido em jogo).
