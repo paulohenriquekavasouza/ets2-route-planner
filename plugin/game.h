@@ -783,15 +783,18 @@ inline bool SetMapNames(void* window, uint32_t id, const char* font, float scale
     return false;
   }
 }
-// What the map looks at (+0x1b4: f32 x, y, z in the sector; i16 sector x, z), as world x and z.
+// Where the map is looking: world x, y (height), z as floats at +0x1a8. (+0x1b4 is only where it was
+// told to look by 0x1000b00; reading that brought a rebuilt map back to the middle of the route, test of
+// 2026-10-06.) Dragging adds each move to +0x8b0 (x) and +0x8b8 (z) in the mouse handler (0x10127e0), and
+// the widget's update (0x100f90e) folds that into +0x1a8 and zeroes it: both are summed here.
 inline bool MapViewCenter(void* window, uint32_t id, double out_xz[2]) {
   __try {
     const uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
     if (!map) return false;
-    const float* const p = reinterpret_cast<const float*>(map + 0x1b4);
-    const int16_t* const sector = reinterpret_cast<const int16_t*>(map + 0x1b4 + 12);
-    out_xz[0] = sector[0] * 512.0 + p[0], out_xz[1] = sector[1] * 512.0 + p[2];
-    return true;
+    const float* const at = reinterpret_cast<const float*>(map + 0x1a8);
+    const float* const drag = reinterpret_cast<const float*>(map + 0x8b0);
+    out_xz[0] = static_cast<double>(at[0]) + drag[0], out_xz[1] = static_cast<double>(at[2]) + drag[2];
+    return std::isfinite(out_xz[0]) && std::isfinite(out_xz[1]);
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }

@@ -685,3 +685,11 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   "(personalizada: N pontos)" porque a limpeza por mudança de serviço só rodava no quadro seguinte, depois de a página ser refeita).
   Botões de zoom do mapa com os ícones dos botões de zoom da tela de mapa do jogo (`/material/ui/button/minus.mat` e `plus.mat`,
   30×30, como em `/ui/world_map.sii`). Materiais de UI do jogo extraídos em `C:\Users\Paulo\ets2-uimat`. NÃO testado em jogo.
+- **v4.0 (2026-10-06), salva a pedido do usuário.** Sobre a 3.3.1: "Limpar planejamento" limpa a rota personalizada, botões de zoom
+  com os ícones do jogo, e o mapa não volta a centralizar na rota ao adicionar um ponto: a posição para onde o mapa olha fica em
+  `+0x1a8` (x, altura, z do mundo, em float); `+0x1b4` é só o foco pedido em `0x1000b00`, e era ele que o plugin lia. O arrasto soma em
+  `+0x8b0`/`+0x8b8` e a atualização do widget (`0x100f90e`) passa isso para `+0x1a8` e zera. `MapViewCenter` lê `+0x1a8` + o arrasto
+  pendente. Esta última correção NÃO foi testada em jogo antes de salvar.
+  Sobre "trocar a carga reinicia a rota": não há caminho no código que faça isso desde `9e30f9e` (a chave é só origem|destino) e o
+  log não mostra nenhum descarte por troca de carga depois dele; o mais provável é a recarga a quente do núcleo às 21:07 (um deploy
+  meu durante o teste), que zera a rota guardada em memória. Nada mudado no código para isso.
