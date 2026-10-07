@@ -753,3 +753,5 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   `core_api.h`: nunca acrescentar campo) e a entrada nova é um export à parte do núcleo, `Core_RouteDraw`, que o host procura com
   `GetProcAddress` depois de carregar. O laço parou no núcleo #330. `deploy.ps1` agora diz HOST CHANGED sempre que o jogo está aberto.
   A memória do host daquela sessão foi escrita fora do lugar: reiniciar o jogo antes de continuar.
+- **v4.2 (2026-10-06): o gancho no desenho da rota foi confirmado em jogo ("ficou perfeito") e publicado** (como 4.2.0, a pedido,
+  em vez de 4.1.1). Primeiro gancho em código do jogo deste plugin.
