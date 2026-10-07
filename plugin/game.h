@@ -814,10 +814,11 @@ inline bool MapViewCenter(void* window, uint32_t id, double out_xz[2]) {
 // The widget makes the list again when it collects its content (after a drag, a zoom), so this is
 // called every frame. Returns how many items it hid now, -1 if the list does not look right.
 // `seen` (optional, 160 chars) gets a description of the list for the log: the first test hid nothing.
-inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin, char* seen = nullptr) {
+// `list` = the list itself (map + 0x160) when the caller has it: the hook on the drawing function.
+inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin, char* seen = nullptr, void* list = nullptr) {
   constexpr size_t kItem = 0xb0;
   __try {
-    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    uint8_t* const map = list ? static_cast<uint8_t*>(list) - 0x160 : FindWidget(static_cast<uint8_t*>(window), id);
     if (!map) return -1;
     uint8_t* const data = *reinterpret_cast<uint8_t**>(map + 0x168);
     const uint64_t count = *reinterpret_cast<const uint64_t*>(map + 0x170);
@@ -848,6 +849,15 @@ inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin, c
     return hidden;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     return -1;
+  }
+}
+
+// Is `map` the widget `id` of `window`? (for the hook on the drawing function, which sees every map of the game)
+inline bool IsWidget(void* window, uint32_t id, const void* map) {
+  __try {
+    return window && map && FindWidget(static_cast<uint8_t*>(window), id) == map;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
   }
 }
 

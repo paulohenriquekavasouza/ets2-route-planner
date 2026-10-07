@@ -28,6 +28,9 @@ struct CoreExports {
   // The DLL is about to be unloaded. game_calls_ok = false when the whole framework is going down
   // (the game's "sdk reinit"): calling into the game there took the game down once.
   void (*Shutdown)(bool game_calls_ok);
+  // EXPERIMENT (v4.1.1): called from the host's hook on the game's function that draws a map's route
+  // (0x1014990), right before it runs, with the map widget and its list of route items.
+  void (*RouteDraw)(void* map, void* list);
 };
 
 // The core's single export: extern "C" bool Core_Init(const CoreApi*, CoreExports*).

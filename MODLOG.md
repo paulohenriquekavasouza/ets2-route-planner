@@ -734,3 +734,15 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   Fica um atraso curto, visto pelo usuário: quando o jogo refaz a lista (rota recalculada, arrasto, zoom) ela é desenhada inteira até
   a próxima passada do plugin, que roda uma vez por quadro. Tirar isso exigiria interceptar a função do jogo que monta ou desenha a
   lista (um gancho no código do jogo), o que não foi feito.
+- **Rumo à v4.1.1 (2026-10-06), EXPERIMENTO: gancho no código do jogo.** NÃO testado em jogo.
+  - Para o trecho caminhão → origem não aparecer nem por um quadro, o corte passou a rodar ANTES de cada desenho: gancho em
+    `bool 0x1014990(mapa, lista*, int64 índice, uint32 cor)` (a função que desenha a rota de um widget de mapa), instalado pelo
+    `Hook_Register` do SPF (assinatura `48 89 54 24 10 57 41 55 48 81 EC B8 00 00 00 4C 8B 52 10 45 8B E9 4C 8B`, única no exe).
+  - O desvio (`DrawRouteDetour`) fica no HOST, porque o núcleo é descarregado na recarga a quente; ele chama `CoreExports::RouteDraw`
+    (campo novo, no fim da struct) e depois a função original. O núcleo só mexe quando o mapa é o da nossa página (ou o da página
+    que está sendo trocada) e a lista é a do próprio widget (`mapa + 0x160`). A passada por quadro continua como reserva.
+  - Riscos anotados: a API do SPF não tem "desregistrar gancho" (confia-se que o SPF remove os ganchos do plugin ao descarregá-lo:
+    "Recarregar Framework" é o teste); `g_ex` é lido no desvio sem o mutex (desenho e recarga na mesma thread, pelo que se viu).
+  - **Cuidado com versões misturadas:** `CoreExports` cresceu. Um host antigo (4 campos) carregando este núcleo (5) teria memória
+    escrita fora da struct. Só acontece se o deploy trocar o núcleo com o jogo aberto e o host antigo em uso ("HOST CHANGED"); neste
+    deploy o jogo estava fechado ("host deployed"). Daqui em diante, mudança em `core_api.h` = jogo fechado no deploy.

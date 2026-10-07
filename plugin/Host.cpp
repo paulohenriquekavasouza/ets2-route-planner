@@ -2,6 +2,7 @@
 // (manifest, keybinds, windows, fonts) and forwards the work to core\RoutePlannerCore.dll, which it
 // hot-reloads when that file changes on disk (deploy.ps1 replaces it). The core is always loaded
 // from a private copy, so the original file is never locked.
+#include <SPF_Hooks_API.h>
 #include <SPF_KeyBinds_API.h>
 #include <SPF_Manifest_API.h>
 
@@ -52,6 +53,21 @@ bool WriteTime(const std::string& path, FILETIME* out) {
   *out = d.ftLastWriteTime;
   return true;
 }
+
+// EXPERIMENT (v4.1.1): a hook on the game's function that draws the route of a map widget,
+// bool 0x1014990(map, list*, int64 index, uint32 colour) in 1.61.1.1, so that the core can take the way
+// from the truck to the origin out of the list before every draw (done once a frame from Update it was
+// seen for a moment each time the game made the list again). The detour lives here because the core is
+// unloaded on a hot reload; SPF installs it and owns the trampoline.
+// ponytail: g_ex is read without the guest mutex (the draw and the reload are both on the game's main
+// thread, as far as seen); a lock here if that ever proves wrong.
+using DrawRoute_t = bool (*)(void* map, void* list, int64_t index, uint32_t colour);
+DrawRoute_t g_draw_route = nullptr;
+bool DrawRouteDetour(void* map, void* list, int64_t index, uint32_t colour) {
+  if (const auto before = g_ex.RouteDraw) before(map, list);
+  return g_draw_route ? g_draw_route(map, list, index, colour) : false;
+}
+constexpr const char* kDrawRouteSig = "48 89 54 24 10 57 41 55 48 81 EC B8 00 00 00 4C 8B 52 10 45 8B E9 4C 8B"; // unique in the exe
 
 // One call site for every mouse-block request (see core_api.h).
 __declspec(noinline) void SetMouseBlocked(bool blocked) {
@@ -183,6 +199,11 @@ void OnActivated(const SPF_Core_API* core) {
       core->keybinds->Kbind_Register(keys, "Routes.toggle", OnPlannerKey);
       core->keybinds->Kbind_Register(keys, "Routes.escort", OnNativeKey);
     }
+  if (core->hooks && core->hooks->Hook_Register) {
+    SPF_Hook_Handle* const hook = core->hooks->Hook_Register(PLUGIN_NAME, "RoutePlanner_DrawRoute", "Rota no mapa do planejador", reinterpret_cast<void*>(&DrawRouteDetour),
+                                                             reinterpret_cast<void**>(&g_draw_route), kDrawRouteSig, true);
+    Log(hook && g_draw_route ? "gancho no desenho da rota do mapa: instalado" : "gancho no desenho da rota do mapa: NÃO instalado (o corte da rota fica uma vez por quadro)");
+  }
   std::lock_guard lock(g_guest_mutex);
   ReloadGuest();
 }
