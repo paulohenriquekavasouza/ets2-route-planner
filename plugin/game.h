@@ -804,6 +804,40 @@ inline bool MapViewCenter(void* window, uint32_t id, double out_xz[2]) {
   }
 }
 
+// The route a map draws is its own list of items at +0x160 (data +0x168, count +0x170, 0xb0 bytes each),
+// in order from the truck: [item] = 0 a waypoint (its route_task_node_t at +0x18), 1 a stretch of road,
+// anything else is skipped by the drawing code (0x1014b10: only 0 and 1 are handled). The GPS always
+// starts at the truck, so the list begins with the way from the truck to the first waypoint; for a
+// preview of a job that begins at the origin company that stretch is noise (the planner teleports
+// there). Its road items are turned into a kind nobody draws. Only when the first waypoint is `origin`:
+// with the truck already there the game has dropped that waypoint and the list starts on the job's way.
+// The widget makes the list again when it collects its content (after a drag, a zoom), so this is
+// called every frame. Returns how many items it hid now, -1 if the list does not look right.
+inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin) {
+  constexpr size_t kItem = 0xb0;
+  __try {
+    uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
+    if (!map) return -1;
+    uint8_t* const data = *reinterpret_cast<uint8_t**>(map + 0x168);
+    const uint64_t count = *reinterpret_cast<const uint64_t*>(map + 0x170);
+    if (!count) return 0;
+    if (!data || count > 200000) return -1;
+    uint64_t first = 0;
+    while (first < count && *reinterpret_cast<const uint32_t*>(data + first * kItem) != 0) ++first;
+    if (first == count) return 0;
+    const uint8_t* const node = data + first * kItem + 0x18;
+    if (*reinterpret_cast<const uint32_t*>(node) != static_cast<uint32_t>(origin.kind) || *reinterpret_cast<const uint64_t*>(node + 8) != origin.what) return 0;
+    int hidden = 0;
+    for (uint64_t i = 0; i < first; ++i) {
+      uint32_t* const kind = reinterpret_cast<uint32_t*>(data + i * kItem);
+      if (*kind == 1) *kind = 3, ++hidden;
+    }
+    return hidden;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -1;
+  }
+}
+
 // A map widget only draws the GPS route when it has been told where the navigation is: the game's own
 // screens hand it the navigation object, game+0x4128 (the same one the GPS waypoints go to), right
 // after creating it. From the set-up of the game's maps (0x54a2a9, and the job offer's at 0x105f426):

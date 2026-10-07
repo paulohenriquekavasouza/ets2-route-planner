@@ -1885,6 +1885,11 @@ void NativeExperiment() {
       }
     }
     if (g_native_window && g_native_page == NativePage::Map && g_native_gps && !g_native_route_until && !down) NativeMapSync();
+    if (g_native_window && g_native_page == NativePage::Map && g_native_gps && g_via_ends_ok) { // the way from the truck to the origin is not part of the job
+      const int hidden = game::HideRouteToOrigin(g_native_window, 100000, g_via_ends[0]);
+      static bool told = false; // a list that does not look right is said once, not every frame
+      if (hidden > 0 || (hidden < 0 && !std::exchange(told, true))) Log("mapa: trecho do caminhão até a origem " + (hidden > 0 ? "escondido (" + std::to_string(hidden) + " itens)" : std::string("NÃO reconhecido")));
+    }
   } else {
     was_down = false;
     g_esc = false;

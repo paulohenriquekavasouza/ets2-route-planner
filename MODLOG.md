@@ -716,3 +716,14 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     quando não varia. A ordenação por peso usa o maior. 321 das 413 cargas têm faixa de mais de 2 t.
   - Fora da conta (ponytail): reboques duplos e limites de peso por país. NÃO conferido em jogo.
 - **v4.0.3 (2026-10-06): publicada a pedido do usuário** (peso das cargas em faixa; não conferido em jogo).
+- **Rumo à v4.1 (2026-10-06): o mapa não mostra o trecho do caminhão até a origem.** NÃO testado em jogo.
+  - O GPS do jogo sempre parte do caminhão (há uma navegação só, `game+0x4128`; o construtor é `0x4fa6f0`, e todas as telas de mapa
+    recebem essa mesma). Na aceitação de um serviço o 1º array (`nav+0x1d0`) leva a empresa de coleta e o 2º o destino
+    (`0x4faee0(nav, 1, [coleta], [destino], …)` em 0x7a15b0): não é um "início" alternativo.
+  - A rota que o mapa desenha é uma lista do próprio widget em `+0x160` (dados `+0x168`, quantidade `+0x170`, 0xb0 bytes por item), na
+    ordem a partir do caminhão: tipo (`[item]`) 0 = ponto de passagem (nó em `+0x18`), 1 = trecho de estrada; o desenho (`0x1014990`,
+    laço em 0x1014b10) ignora qualquer outro tipo. `game::HideRouteToOrigin` troca para 3 os trechos antes do 1º ponto, só quando esse
+    ponto é a empresa de origem (com o caminhão já nela o jogo tira esse ponto e a lista começa no caminho do serviço). O widget refaz
+    a lista ao recolher o conteúdo (arrasto, zoom), então roda a cada quadro na página do mapa.
+  - Vale sempre que a origem ainda é um ponto do GPS, mesmo na mesma cidade (o pedido falava em cidade diferente; o trecho dentro da
+    cidade também não é parte do serviço). A distância e o tempo do título continuam sendo os do GPS, a partir do caminhão.
