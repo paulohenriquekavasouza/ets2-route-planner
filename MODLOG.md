@@ -705,3 +705,4 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     compara só os pontos do jogador (sem as duas empresas) e não "desfaz" mais nada.
   - Botão "Maior rota possível" fora da tela nativa (a função `PickLongestRoute` fica; o F8 ainda tem o dele); a linha "N empresas na
     origem, M no destino" subiu para o lugar.
+- **v4.0.2 (2026-10-06): confirmada em jogo pelo usuário ("corrigido") e publicada.**

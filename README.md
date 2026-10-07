@@ -40,5 +40,5 @@ do jogo é versionado aqui.
 
 ## Branches
 
-- `master`: versão atual (tags `v1.0` … `v4.0.1` são as versões aprovadas).
+- `master`: versão atual (tags `v1.0` … `v4.0.2` são as versões aprovadas).
 - `escolta`: experimento parado de uma viatura de polícia que escolta o caminhão.
