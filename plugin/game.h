@@ -813,7 +813,8 @@ inline bool MapViewCenter(void* window, uint32_t id, double out_xz[2]) {
 // with the truck already there the game has dropped that waypoint and the list starts on the job's way.
 // The widget makes the list again when it collects its content (after a drag, a zoom), so this is
 // called every frame. Returns how many items it hid now, -1 if the list does not look right.
-inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin) {
+// `seen` (optional, 160 chars) gets a description of the list for the log: the first test hid nothing.
+inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin, char* seen = nullptr) {
   constexpr size_t kItem = 0xb0;
   __try {
     uint8_t* const map = FindWidget(static_cast<uint8_t*>(window), id);
@@ -822,11 +823,23 @@ inline int HideRouteToOrigin(void* window, uint32_t id, const NavNode& origin) {
     const uint64_t count = *reinterpret_cast<const uint64_t*>(map + 0x170);
     if (!count) return 0;
     if (!data || count > 200000) return -1;
-    uint64_t first = 0;
-    while (first < count && *reinterpret_cast<const uint32_t*>(data + first * kItem) != 0) ++first;
+    // the origin's own item, wherever it is (the list may begin with an item for the truck)
+    uint64_t first = count;
+    int kinds[4] = {}, waypoints = 0;
+    char* out = seen;
+    if (out) out += std::snprintf(out, 160, "%llu itens, origem %x/%llx:", static_cast<unsigned long long>(count), static_cast<uint32_t>(origin.kind), static_cast<unsigned long long>(origin.what));
+    for (uint64_t i = 0; i < count; ++i) {
+      const uint32_t kind = *reinterpret_cast<const uint32_t*>(data + i * kItem);
+      ++kinds[kind < 3 ? kind : 3];
+      if (kind != 0) continue;
+      const uint8_t* const node = data + i * kItem + 0x18;
+      const uint32_t node_kind = *reinterpret_cast<const uint32_t*>(node);
+      const uint64_t what = *reinterpret_cast<const uint64_t*>(node + 8);
+      if (out && waypoints++ < 4 && out - seen < 120) out += std::snprintf(out, 40, " [%llu]=%x/%llx", static_cast<unsigned long long>(i), node_kind, static_cast<unsigned long long>(what));
+      if (first == count && node_kind == static_cast<uint32_t>(origin.kind) && what == origin.what) first = i;
+    }
+    if (out && out - seen < 120) std::snprintf(out, 40, "; tipos %d/%d/%d/%d", kinds[0], kinds[1], kinds[2], kinds[3]);
     if (first == count) return 0;
-    const uint8_t* const node = data + first * kItem + 0x18;
-    if (*reinterpret_cast<const uint32_t*>(node) != static_cast<uint32_t>(origin.kind) || *reinterpret_cast<const uint64_t*>(node + 8) != origin.what) return 0;
     int hidden = 0;
     for (uint64_t i = 0; i < first; ++i) {
       uint32_t* const kind = reinterpret_cast<uint32_t*>(data + i * kItem);

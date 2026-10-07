@@ -727,3 +727,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
     a lista ao recolher o conteúdo (arrasto, zoom), então roda a cada quadro na página do mapa.
   - Vale sempre que a origem ainda é um ponto do GPS, mesmo na mesma cidade (o pedido falava em cidade diferente; o trecho dentro da
     cidade também não é parte do serviço). A distância e o tempo do título continuam sendo os do GPS, a partir do caminhão.
+- **v4.1 (2026-10-06): confirmada em jogo e publicada.** O trecho caminhão → origem some do mapa. O que o log mostrou sobre a lista
+  (`+0x160`): tipo 0 não é só ponto de passagem, é cada nó da estrada (4.263 itens tipo 0, 6.863 tipo 1 numa rota de 6.300 km), e a
+  empresa de origem não é o primeiro deles; por isso a 1ª versão (que olhava só o primeiro tipo 0) não cortava nada. Agora procura o
+  item da origem em qualquer posição e esconde os trechos antes dele.
+  Fica um atraso curto, visto pelo usuário: quando o jogo refaz a lista (rota recalculada, arrasto, zoom) ela é desenhada inteira até
+  a próxima passada do plugin, que roda uma vez por quadro. Tirar isso exigiria interceptar a função do jogo que monta ou desenha a
+  lista (um gancho no código do jogo), o que não foi feito.
