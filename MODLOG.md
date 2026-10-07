@@ -746,3 +746,10 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   - **Cuidado com versões misturadas:** `CoreExports` cresceu. Um host antigo (4 campos) carregando este núcleo (5) teria memória
     escrita fora da struct. Só acontece se o deploy trocar o núcleo com o jogo aberto e o host antigo em uso ("HOST CHANGED"); neste
     deploy o jogo estava fechado ("host deployed"). Daqui em diante, mudança em `core_api.h` = jogo fechado no deploy.
+- **Incidente no deploy do experimento (2026-10-06, 21:53):** o jogo ESTAVA aberto (o deploy disse "host deployed" porque um deploy
+  anterior já tinha movido o host carregado; a cópia por cima do arquivo novo dá certo). O host antigo em memória recarregou o núcleo
+  novo, que preenchia uma `CoreExports` de 5 campos numa de 4: escreveu 8 bytes além da struct e o host passou a recarregar o núcleo
+  sem parar (núcleos #95 a #329 em ~1 min, um a cada ~0,3 s). Corrigido em 1 min: `CoreExports` voltou a 4 campos (regra escrita em
+  `core_api.h`: nunca acrescentar campo) e a entrada nova é um export à parte do núcleo, `Core_RouteDraw`, que o host procura com
+  `GetProcAddress` depois de carregar. O laço parou no núcleo #330. `deploy.ps1` agora diz HOST CHANGED sempre que o jogo está aberto.
+  A memória do host daquela sessão foi escrita fora do lugar: reiniciar o jogo antes de continuar.

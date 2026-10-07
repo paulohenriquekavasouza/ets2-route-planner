@@ -28,10 +28,14 @@ struct CoreExports {
   // The DLL is about to be unloaded. game_calls_ok = false when the whole framework is going down
   // (the game's "sdk reinit"): calling into the game there took the game down once.
   void (*Shutdown)(bool game_calls_ok);
-  // EXPERIMENT (v4.1.1): called from the host's hook on the game's function that draws a map's route
-  // (0x1014990), right before it runs, with the map widget and its list of route items.
-  void (*RouteDraw)(void* map, void* list);
 };
+// NEVER add a field to CoreExports or CoreApi: deploy.ps1 hot-reloads a new core into whatever host the
+// running game has, and a core that fills a bigger CoreExports writes past the old host's struct (it
+// happened on 2026-10-06: the host then reloaded the core without end). New entry points are extra
+// exports of the core DLL, which an old host simply never looks up:
+//   extern "C" void Core_RouteDraw(void* map, void* list)   EXPERIMENT (v4.1.1): called from the host's hook
+//   on the game's function that draws a map's route (0x1014990), right before it runs.
+typedef void (*Core_RouteDraw_Fn)(void* map, void* list);
 
 // The core's single export: extern "C" bool Core_Init(const CoreApi*, CoreExports*).
 typedef bool (*Core_Init_Fn)(const CoreApi* api, CoreExports* out);

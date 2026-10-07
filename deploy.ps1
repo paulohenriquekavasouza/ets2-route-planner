@@ -35,7 +35,8 @@ $hostChanged = -not (Test-Path $hostDst) -or (Get-FileHash $hostNew).Hash -ne (G
 if ($hostChanged) {
   New-Item -ItemType Directory -Force $stale | Out-Null
   Get-ChildItem $stale -Filter *.dll | ForEach-Object { try { Remove-Item $_.FullName -ErrorAction Stop } catch {} }  # still-loaded ones stay
-  try { Copy-Item $hostNew $hostDst -Force; $hostMsg = 'host deployed' }
+  # the copy also succeeds with the game open when an earlier deploy already moved the loaded host away
+  try { Copy-Item $hostNew $hostDst -Force; $hostMsg = if (Get-Process eurotrucks2 -ErrorAction SilentlyContinue) { 'HOST CHANGED while the game is running: in game, SPF -> Recarregar Framework (or restart) to pick it up.' } else { 'host deployed' } }
   catch {
     Move-Item $hostDst (Join-Path $stale ("RoutePlanner-{0:yyyyMMdd-HHmmss}.dll" -f (Get-Date)))
     Copy-Item $hostNew $hostDst

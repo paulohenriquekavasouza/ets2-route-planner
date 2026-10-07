@@ -1918,7 +1918,7 @@ void NativeExperiment() {
 // EXPERIMENT (v4.1.1): the game is about to draw the route of a map (the host's hook, core_api.h). When it
 // is the map of our page, or of the page being replaced (still on screen for a few frames), and the list
 // is the widget's own, the way from the truck to the origin goes out of it first: no frame shows it.
-void RouteDraw(void* map, void* list) {
+void RouteDrawNow(void* map, void* list) {
   if (g_native_page != NativePage::Map || !g_native_gps || !g_via_ends_ok || list != static_cast<uint8_t*>(map) + 0x160) return;
   if (!game::IsWidget(g_native_window, 100000, map) && !game::IsWidget(g_native_old, 100000, map)) return;
   game::HideRouteToOrigin(nullptr, 0, g_via_ends[0], nullptr, list);
@@ -1981,6 +1981,8 @@ void Shutdown(bool game_calls_ok) {
 
 } // namespace
 
+extern "C" __declspec(dllexport) void Core_RouteDraw(void* map, void* list) { RouteDrawNow(map, list); } // see core_api.h
+
 extern "C" __declspec(dllexport) bool Core_Init(const CoreApi* api, CoreExports* out) {
   if (!api || !api->core || !api->core->ui || !api->SetMouseBlocked || !out) return false;
   g_api = *api;
@@ -1993,6 +1995,6 @@ extern "C" __declspec(dllexport) bool Core_Init(const CoreApi* api, CoreExports*
   g_supported = game::Supported();
   Log("núcleo #" + std::to_string(api->reloads) + " (" __DATE__ " " __TIME__ "): " + std::to_string(g_data.cities.size()) + " cidades, " +
       std::to_string(g_data.cargo_names.size()) + " cargas; jogo " + (g_supported ? "reconhecido" : "NÃO reconhecido") + ". F8 abre.");
-  *out = {Update, DrawPlanner, Key, Shutdown, RouteDraw};
+  *out = {Update, DrawPlanner, Key, Shutdown};
   return true;
 }

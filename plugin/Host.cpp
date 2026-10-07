@@ -59,12 +59,13 @@ bool WriteTime(const std::string& path, FILETIME* out) {
 // from the truck to the origin out of the list before every draw (done once a frame from Update it was
 // seen for a moment each time the game made the list again). The detour lives here because the core is
 // unloaded on a hot reload; SPF installs it and owns the trampoline.
-// ponytail: g_ex is read without the guest mutex (the draw and the reload are both on the game's main
+// ponytail: g_route_draw is read without the guest mutex (the draw and the reload are both on the game's main
 // thread, as far as seen); a lock here if that ever proves wrong.
+Core_RouteDraw_Fn g_route_draw = nullptr; // the core's Core_RouteDraw, while a core that has it is loaded
 using DrawRoute_t = bool (*)(void* map, void* list, int64_t index, uint32_t colour);
 DrawRoute_t g_draw_route = nullptr;
 bool DrawRouteDetour(void* map, void* list, int64_t index, uint32_t colour) {
-  if (const auto before = g_ex.RouteDraw) before(map, list);
+  if (const auto before = g_route_draw) before(map, list);
   return g_draw_route ? g_draw_route(map, list, index, colour) : false;
 }
 constexpr const char* kDrawRouteSig = "48 89 54 24 10 57 41 55 48 81 EC B8 00 00 00 4C 8B 52 10 45 8B E9 4C 8B"; // unique in the exe
@@ -76,6 +77,7 @@ __declspec(noinline) void SetMouseBlocked(bool blocked) {
 
 void UnloadGuest(bool game_calls_ok) {
   if (!g_guest) return;
+  g_route_draw = nullptr;
   if (g_ex.Shutdown) g_ex.Shutdown(game_calls_ok);
   g_ex = {};
   FreeLibrary(g_guest);
@@ -111,6 +113,7 @@ bool ReloadGuest() {
     g_guest = nullptr;
     return false;
   }
+  g_route_draw = reinterpret_cast<Core_RouteDraw_Fn>(GetProcAddress(g_guest, "Core_RouteDraw")); // absent in an older core
   return true;
 }
 
