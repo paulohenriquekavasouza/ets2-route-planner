@@ -693,3 +693,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   Sobre "trocar a carga reinicia a rota": não há caminho no código que faça isso desde `9e30f9e` (a chave é só origem|destino) e o
   log não mostra nenhum descarte por troca de carga depois dele; o mais provável é a recarga a quente do núcleo às 21:07 (um deploy
   meu durante o teste), que zera a rota guardada em memória. Nada mudado no código para isso.
+- **v4.0.1 (2026-10-06), publicada a pedido do usuário.** Botões de zoom do mapa: `0x10005c0` só troca o nível e a altura do nível
+  (`+0x1e0`), o que muda o tamanho de ícones e nomes mas não a vista; a vista usa a altura em `+0x1ac` (o y da posição em `+0x1a8`),
+  que `0x1000b00` copia de `+0x1e0`. `SetMapZoom` agora faz essa cópia. (Os botões nunca tinham funcionado de verdade; a roda sempre
+  foi do próprio widget.) "Rota padrão" encostado nos botões de zoom; texto de ajuda centralizado sob o mapa. NÃO testado em jogo.

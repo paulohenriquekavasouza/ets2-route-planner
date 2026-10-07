@@ -571,6 +571,10 @@ inline int SetMapZoom(void* window, uint32_t id, int level, bool rebuild = false
     if (levels < 1 || levels > 64) return -1;
     level = level < 0 ? 0 : level >= levels ? levels - 1 : level;
     At<void (*)(void*, int)>(MAP_SET_ZOOM)(map, level);
+    // 0x10005c0 only sets the level and its height (+0x1e0): icons and names change size, the view does
+    // not (the zoom buttons of v4.0). What the map looks from is the height at +0x1ac (the y of the
+    // position at +0x1a8), which 0x1000b00 copies from +0x1e0 when it places the map: the same here.
+    *reinterpret_cast<float*>(map + 0x1ac) = *reinterpret_cast<const float*>(map + 0x1e0);
     MapIcons(map, data, rebuild);
     return level;
   } __except (EXCEPTION_EXECUTE_HANDLER) {

@@ -1507,9 +1507,9 @@ void NativeMapPage(NativeUi& ui) {
   ui.Title(g_native_map_note.empty() ? "MAPA DO JOGO" : g_native_map_note, 90, 772, 1260, 30, kNFontBold, kNAmber);
   ui.Node("ui_world_map", " show_country_names: false\n zoom_allowed: true\n map_config_path: \"\"\n fitting: false\n my_children: 0\n", 90, 740, 1260, 610, 100000, 4);
   ui.TextButton("Voltar", kX1, 96, 160, [] { NativeGoTo(NativePage::Planner); });
-  ui.Title("Clique numa estrada para a rota passar por ali (" + OwnViaText(" ponto)", " pontos)"), kX1 + 170, 96, 690, 32, kNFontSmall, kNDim);
+  ui.Title("Clique numa estrada para a rota passar por ali (" + OwnViaText(" ponto)", " pontos)"), kX1 + 238, 96, 784, 32, kNFontSmall, kNDim); // centred under the map
   if (!g_via.empty())
-    ui.TextButton("Rota padrão", kX1 + 870, 96, 150, [] {
+    ui.TextButton("Rota padrão", kX1 + 1032, 96, 150, [] { // next to the zoom buttons
       g_via.clear();
       g_native_map_keep_view = false;
       NativeGpsPreview(true);
