@@ -1357,6 +1357,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   // the planner back to empty, when there is anything in it
   if (!g_src.country.empty() || !g_src.city.empty() || !g_dst.country.empty() || !g_dst.city.empty() || CargoPicked() || editing)
     ui.TextButton("Limpar planejamento", kX3 + kCardW - 300, ay - 5, 300, [] {
+      g_via.clear(); // now, not on the next frame: the page is drawn again before that
       g_src = {};
       g_dst = {};
       g_options.clear();
@@ -1515,7 +1516,8 @@ void NativeMapPage(NativeUi& ui) {
       g_native_keep = g_native_route_until != 0;
     });
   for (const int step : {-1, 1})
-    ui.TextButton(step < 0 ? "Zoom -" : "Zoom +", kX1 + (step < 0 ? 1030 : 1150), 96, 110, [step] {
+    // the icons of the zoom buttons of the game's own map screen (/ui/world_map.sii), 30 x 30, minus on the left
+    ui.Button(At(1, 1) + (step < 0 ? "<img src=/material/ui/button/minus.mat>" : "<img src=/material/ui/button/plus.mat>"), kX1 + (step < 0 ? 1190 : 1228), 96, 32, 32, [step] {
       // on the map that is on screen; "+" is closer = a lower level, never below the world map's closest
       const int now = game::SetMapZoom(g_native_window, 100000, std::max(4, g_native_map_zoom - step), true);
       if (now >= 0) g_native_map_zoom = now;

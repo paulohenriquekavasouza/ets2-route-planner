@@ -681,3 +681,7 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   planejador, ao clicar numa estrada e em "Rota padrão" (`g_native_keep` enquanto `g_native_route_until`). NÃO testado em jogo.
   Ideia para zerar as piscadas, não feita: o mapa numa janela do jogo à parte, que não é refeita (incerto: ordem das janelas e cliques).
 - **v3.3.1 (2026-10-06): aprovada pelo usuário ("ficou bem melhor").** A página do mapa é refeita uma vez por mudança.
+- **Depois da v3.3.1 (2026-10-06):** "Limpar planejamento" também limpa a rota personalizada na hora (o botão do mapa ainda mostrava
+  "(personalizada: N pontos)" porque a limpeza por mudança de serviço só rodava no quadro seguinte, depois de a página ser refeita).
+  Botões de zoom do mapa com os ícones dos botões de zoom da tela de mapa do jogo (`/material/ui/button/minus.mat` e `plus.mat`,
+  30×30, como em `/ui/world_map.sii`). Materiais de UI do jogo extraídos em `C:\Users\Paulo\ets2-uimat`. NÃO testado em jogo.
