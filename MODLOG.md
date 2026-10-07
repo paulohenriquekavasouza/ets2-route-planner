@@ -697,3 +697,11 @@ Pergunta do usuário: como funciona a escolta do DLC, para fazer igual com qualq
   (`+0x1e0`), o que muda o tamanho de ícones e nomes mas não a vista; a vista usa a altura em `+0x1ac` (o y da posição em `+0x1a8`),
   que `0x1000b00` copia de `+0x1e0`. `SetMapZoom` agora faz essa cópia. (Os botões nunca tinham funcionado de verdade; a roda sempre
   foi do próprio widget.) "Rota padrão" encostado nos botões de zoom; texto de ajuda centralizado sob o mapa. NÃO testado em jogo.
+- **Rumo à v4.0.2 (2026-10-06).** NÃO testado em jogo.
+  - **Laço infinito ao abrir o mapa** (o usuário associou a escolher a carga antes; o log mostra outra coisa): "a lista do mapa mudou
+    (1 nós) … desfeito" em repetição. O caminhão estava parado NA empresa de origem (lkwlog, Luxemburgo): o jogo tira do GPS o ponto
+    em que o caminhão já está, a lista do widget volta só com o destino, e o plugin tomava isso por uma mudança a desfazer, refazendo a
+    página sem parar. Com a carga escolhida a origem é a empresa da carga, justamente onde o caminhão estava. `NativeMapSync` agora
+    compara só os pontos do jogador (sem as duas empresas) e não "desfaz" mais nada.
+  - Botão "Maior rota possível" fora da tela nativa (a função `PickLongestRoute` fica; o F8 ainda tem o dele); a linha "N empresas na
+    origem, M no destino" subiu para o lugar.

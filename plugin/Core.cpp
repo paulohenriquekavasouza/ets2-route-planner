@@ -1234,7 +1234,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   NativePlaceButton(ui, "ORIGEM", g_src, true, kX1 + kNPad, top - 56, bw);
   ui.TextButton("Usar a cidade atual", kX1 + kNPad, top - 148, bw, [] { PickCurrentCity(); });
   NativePlaceButton(ui, "DESTINO", g_dst, false, kX1 + kNPad, top - 206, bw);
-  ui.TextButton("Maior rota possível", kX1 + kNPad, top - 298, bw, [] { PickLongestRoute(); });
+  // ("Maior rota possível", PickLongestRoute, is off this screen since v4.0.2 at the user's request; F8 still has it.)
   // (Opening the game's own map screen instead showed the route too, but left the world black on the way
   // back to the planner: see MODLOG, v3.2.)
   ui.TextButton(g_via.empty() ? "Ver a rota no mapa" : "Ver a rota no mapa (personalizada: " + OwnViaText(" ponto)", " pontos)"), kX1 + kNPad,
@@ -1245,7 +1245,7 @@ void NativePlannerPage(NativeUi& ui, const SPF_JobData& jd) {
   if (!g_src.city.empty() && !g_dst.city.empty()) {
     const int out = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_src.city; }));
     const int in = static_cast<int>(std::count_if(g_data.branches.begin(), g_data.branches.end(), [](const Named& b) { return b.parent == g_dst.city; }));
-    ui.Title(std::to_string(out) + " empresas na origem, " + std::to_string(in) + " no destino", kX1, top - 334, w, 24, kNFontSmall, kNDim);
+    ui.Title(std::to_string(out) + " empresas na origem, " + std::to_string(in) + " no destino", kX1, top - 296, w, 24, kNFontSmall, kNDim);
   }
   // ---- cargo ----
   ui.Card("CARGA", kX2, top, w, h);
@@ -1789,17 +1789,24 @@ void NativeMapSync() {
   game::NavNode now[game::kMaxVia];
   const int count = game::MapWaypoints(g_native_window, 100000, now);
   if (count < 0 || !g_via_ends_ok) return;
-  const game::NavNode* const known = g_via.empty() ? g_via_ends : g_via.data();
-  const int known_count = g_via.empty() ? 2 : static_cast<int>(g_via.size());
-  bool same = count == known_count;
-  for (int i = 0; same && i < count; ++i) same = SameNode(now[i], known[i]);
-  if (same) return;
-  int ends = 0;
-  for (int i = 0; i < count; ++i) ends += SameNode(now[i], g_via_ends[0]) || SameNode(now[i], g_via_ends[1]);
-  if (g_via.empty() && count == 2 && ends == 2) return; // the default route, whatever the order
-  if (ends == 2) g_via.assign(now, now + count);
-  Log("mapa: a lista do mapa mudou (" + std::to_string(count) + " nós)" + (ends == 2 ? "" : "; a origem e o destino não saem da rota, desfeito")); // the page is rebuilt from the route of before
-  if (g_via.size() <= 2) g_via.clear(); // only the two companies: the default route
+  // Only the player's own points are compared: the game takes a waypoint out of the GPS when the truck is
+  // at it, so with the truck parked at the origin company the list comes back without the origin, and
+  // taking that for a change made the page rebuild for ever (v4.0.1, seen in the log).
+  const auto own_of = [](const game::NavNode* nodes, int n) {
+    std::vector<game::NavNode> own;
+    for (int i = 0; i < n; ++i)
+      if (!SameNode(nodes[i], g_via_ends[0]) && !SameNode(nodes[i], g_via_ends[1])) own.push_back(nodes[i]);
+    return own;
+  };
+  const std::vector<game::NavNode> own = own_of(now, count), known = own_of(g_via.data(), static_cast<int>(g_via.size()));
+  if (std::equal(own.begin(), own.end(), known.begin(), known.end(), SameNode)) return;
+  Log("mapa: os pontos do jogador mudaram (" + std::to_string(known.size()) + " -> " + std::to_string(own.size()) + ")");
+  g_via.clear(); // empty = the default route
+  if (!own.empty()) {
+    g_via.assign(1, g_via_ends[0]);
+    g_via.insert(g_via.end(), own.begin(), own.end());
+    g_via.push_back(g_via_ends[1]);
+  }
   g_native_map_keep_view = game::MapViewCenter(g_native_window, 100000, g_native_map_center);
   if (g_native_map_keep_view) g_native_map_focus = true;
   NativeGpsPreview(true);
