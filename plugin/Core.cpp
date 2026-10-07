@@ -1825,7 +1825,8 @@ void NativeExperiment() {
     if (ready || late) {
       g_native_route_until = 0;
       g_native_paused = game::PauseForUi(true);
-      g_native_route_km = nav.navigation_distance / 1000.0f, g_native_route_min = nav.navigation_time / 60.0f;
+      // + 1 km and + 1 min on what the game's GPS says: asked for by the user (v4.2.1)
+      g_native_route_km = nav.navigation_distance / 1000.0f + 1, g_native_route_min = nav.navigation_time / 60.0f + 1;
       char line[200];
       if (ready)
         std::snprintf(line, sizeof line, "%s - %s: %s km, %dh%02d pelo GPS do jogo (a partir do caminhão)", CityLabel(g_src.city).c_str(), CityLabel(g_dst.city).c_str(),
